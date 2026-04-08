@@ -1,25 +1,10 @@
-include(FetchContent)
-
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/heads/main.zip
-)
-FetchContent_MakeAvailable(googletest)
-
-add_executable(peakfinder_tests
-  test_peak_utils.cpp
-  test_peak_cuda_pipeline.cpp
+add_executable(gpjson-cpp_tests
+  test_gpjson_dummy.cpp
 )
 
-target_link_libraries(peakfinder_tests
+target_link_libraries(gpjson-cpp_tests
   PRIVATE
-    peakfinder
-    GTest::gtest_main
+    gpjson-cpp_lib
 )
 
-set_target_properties(peakfinder_tests PROPERTIES
-  CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES}
-)
-
-include(GoogleTest)
-gtest_discover_tests(peakfinder_tests)
+add_test(NAME gpjson-cpp_tests COMMAND gpjson-cpp_tests)

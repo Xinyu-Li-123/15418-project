@@ -1,28 +1,25 @@
-#include "peakfinder/peak_finder.hpp"
-#include "peakfinder/peak_utils.hpp"
+#include "gpjson/engine.hpp"
 
 #include <iostream>
+#include <string>
 #include <vector>
 
 int main() {
-  std::vector<int> input{1, 3, 2, 5, 4, 7, 1, 6, 6, 2};
+  gpjson::EngineOptions options{};
+  gpjson::Engine engine{};
 
-  auto gpu_peaks = peakfinder::find_peaks_gpu(input);
-  auto cpu_peaks = peakfinder::find_peaks_cpu(input);
+  const std::string dataset_path = "./datasets/twitter_large_record.json";
+  const std::vector<std::string> queries{
+      "$.user.lang",
+      "$.user.lang[?(@ == \"en\")]",
+  };
 
-  std::cout << "Input: ";
-  for (int x : input) {
-    std::cout << x << ' ';
-  }
-  std::cout << "\nGPU peaks at indices: ";
-  for (int i : gpu_peaks) {
-    std::cout << i << ' ';
-  }
-  std::cout << "\nCPU peaks at indices: ";
-  for (int i : cpu_peaks) {
-    std::cout << i << ' ';
-  }
-  std::cout << '\n';
+  auto batch_result = engine.query(dataset_path, queries, options);
+
+  std::cout << "Initialized gpjson-cpp engine\n";
+  std::cout << "Dataset: " << dataset_path << '\n';
+  std::cout << "Submitted " << queries.size() << " batched queries\n";
+  (void)batch_result;
 
   return 0;
 }

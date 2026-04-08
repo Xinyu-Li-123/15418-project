@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.26)
 
-project(peakfinder
+project(gpjson-cpp
   VERSION 0.1.0
-  DESCRIPTION "Modern C++ + CUDA sample: local peak finding with Thrust scan"
+  DESCRIPTION "C++/CUDA implementation of GpJSON"
   LANGUAGES CXX CUDA)
 
 include(CTest)
@@ -14,19 +14,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# For reproducible binaries, set architectures explicitly.
-# RTX 2080 Ti is Turing, SM 75.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 75)
 endif()
 
-add_library(peakfinder
-  src/peak_utils.cpp
-  src/peak_finder.cu
-  src/peak_kernels.cu
+add_library(gpjson-cpp_lib
+  src/gpjson/engine.cpp
 )
 
-target_include_directories(peakfinder
+target_include_directories(gpjson-cpp_lib
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -34,27 +30,24 @@ target_include_directories(peakfinder
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_compile_features(peakfinder PUBLIC cxx_std_20)
+target_compile_features(gpjson-cpp_lib PUBLIC cxx_std_20)
 
-target_compile_options(peakfinder
+target_compile_options(gpjson-cpp_lib
   PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
 )
 
-# Native CUDA support is the modern path.
-set_target_properties(peakfinder PROPERTIES
+set_target_properties(gpjson-cpp_lib PROPERTIES
   CUDA_SEPARABLE_COMPILATION ON
   CUDA_RESOLVE_DEVICE_SYMBOLS ON
 )
 
-# Thrust is header-only and comes with the CUDA Toolkit headers.
-# We still locate the toolkit explicitly so imported CUDA targets are available.
 find_package(CUDAToolkit REQUIRED)
-target_link_libraries(peakfinder PUBLIC CUDA::cudart)
+target_link_libraries(gpjson-cpp_lib PUBLIC CUDA::cudart)
 
-add_executable(peakfinder_cli apps/main.cpp)
-target_link_libraries(peakfinder_cli PRIVATE peakfinder)
+add_executable(gpjson-cpp apps/main.cpp)
+target_link_libraries(gpjson-cpp PRIVATE gpjson-cpp_lib)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)
