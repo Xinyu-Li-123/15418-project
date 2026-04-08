@@ -4,3 +4,4 @@ build/
 datasets/
 
 compile_commands.json
+.codex

@@ -20,6 +20,8 @@ endif()
 
 add_library(gpjson-cpp_lib
   src/gpjson/engine.cpp
+  src/gpjson/file/file.cpp
+  src/gpjson/file/file_reader.cpp
 )
 
 target_include_directories(gpjson-cpp_lib
