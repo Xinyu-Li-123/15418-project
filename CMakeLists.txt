@@ -22,6 +22,9 @@ add_library(gpjson-cpp_lib
   src/gpjson/engine.cpp
   src/gpjson/file/file.cpp
   src/gpjson/file/file_reader.cpp
+  src/gpjson/query/query.cpp
+  src/gpjson/query/query_compiler.cpp
+  src/gpjson/query/query_executor.cpp
 )
 
 target_include_directories(gpjson-cpp_lib
