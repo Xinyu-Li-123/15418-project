@@ -19,6 +19,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 add_library(gpjson-cpp_lib
+  src/gpjson/cuda/cuda.cpp
   src/gpjson/engine.cpp
   src/gpjson/file/file.cpp
   src/gpjson/file/file_reader.cpp
