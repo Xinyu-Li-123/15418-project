@@ -1,32 +1,42 @@
 #pragma once
 
+#include "gpjson/cuda/cuda.hpp"
+
 namespace gpjson::index {
-// abstract class
-class Index {};
 
-// RAII class, owns a gpjson::cuda::DeviceArray
-class NewlineIndex : Index {};
+class Index {
+public:
+  virtual ~Index() = default;
 
-class EscapeCarryIndex : Index {};
+protected:
+  Index() = default;
+};
 
-class EscapeIndex : Index {};
+class NewlineIndex final : public Index {};
 
-class QuoteCarryIndex : Index {};
+class EscapeCarryIndex final : public Index {};
 
-class QuoteIndex : Index {};
+class EscapeIndex final : public Index {};
 
-class StringCarryIndex : Index {};
+class QuoteCarryIndex final : public Index {};
 
-class StringIndex : Index {};
+class QuoteIndex final : public Index {};
 
-class LeveledBitmapIndex : Index {};
+class StringCarryIndex final : public Index {};
 
-// RAII class for a collection of indices we will use for our executor.
-// Owns the indices
+class StringIndex final : public Index {};
+
+class LeveledBitmapIndex final : public Index {};
+
 class BuiltIndices {
 public:
-  NewlineIndex get_newline_index();
-  StringIndex get_string_index();
-  LeveledBitmapIndex get_leveled_bitmap_index();
-}
+  const NewlineIndex &get_newline_index() const;
+  const StringIndex &get_string_index() const;
+  const LeveledBitmapIndex &get_leveled_bitmap_index() const;
+
+private:
+  NewlineIndex newline_index_;
+  StringIndex string_index_;
+  LeveledBitmapIndex leveled_bitmap_index_;
+};
 } // namespace gpjson::index
