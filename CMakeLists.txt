@@ -18,6 +18,8 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 75)
 endif()
 
+option(GPJSON_CPP_DEBUG "Enable GPJSON debug logging and assertions" OFF)
+
 add_library(gpjson-cpp_lib
   src/gpjson/cuda/cuda.cpp
   src/gpjson/engine.cpp
@@ -39,6 +41,10 @@ target_include_directories(gpjson-cpp_lib
 )
 
 target_compile_features(gpjson-cpp_lib PUBLIC cxx_std_20)
+
+if(GPJSON_CPP_DEBUG)
+  target_compile_definitions(gpjson-cpp_lib PUBLIC GPJSON_CPP_DEBUG)
+endif()
 
 target_compile_options(gpjson-cpp_lib
   PRIVATE

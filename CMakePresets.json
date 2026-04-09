@@ -14,6 +14,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CUDA_ARCHITECTURES": "75",
+        "GPJSON_CPP_DEBUG": "ON",
         "BUILD_TESTING": "ON",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
@@ -26,6 +27,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_CUDA_ARCHITECTURES": "75",
+        "GPJSON_CPP_DEBUG": "OFF",
         "BUILD_TESTING": "ON"
       }
     }

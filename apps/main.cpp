@@ -1,10 +1,14 @@
 #include "gpjson/engine.hpp"
+#include "gpjson/log/log.hpp"
 
 #include <iostream>
 #include <string>
 #include <vector>
 
 int main() {
+
+  LogInfo("The app is currently just a placeholder.");
+
   gpjson::EngineOptions options{};
   gpjson::Engine engine{};
 
