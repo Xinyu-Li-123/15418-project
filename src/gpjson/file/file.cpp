@@ -4,7 +4,9 @@ namespace gpjson::file {
 
 size_t PartitionView::partition_id() const { return partition_id_; }
 
-size_t PartitionView::global_start_offset() const { return global_start_offset_; }
+size_t PartitionView::global_start_offset() const {
+  return global_start_offset_;
+}
 
 size_t PartitionView::global_end_offset() const { return global_end_offset_; }
 

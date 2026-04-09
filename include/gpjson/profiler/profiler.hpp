@@ -1,5 +1,5 @@
 #pragma once
 
 namespace gpjson::profiler {
-class Profiler {}
+class Profiler {};
 } // namespace gpjson::profiler

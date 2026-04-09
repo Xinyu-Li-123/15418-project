@@ -4,7 +4,8 @@
 
 namespace gpjson::file {
 
-FileReader::FileReader(std::string file_path) : file_path_(std::move(file_path)) {
+FileReader::FileReader(std::string file_path)
+    : file_path_(std::move(file_path)) {
   metadata_.file_path = file_path_;
 }
 
