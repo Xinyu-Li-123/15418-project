@@ -4,21 +4,12 @@
 
 #include "gpjson/cuda/cuda.hpp"
 #include "gpjson/cuda/error.hpp"
+#include "test_utils.hpp"
 
 #include <gtest/gtest.h>
 
 #include <utility>
 #include <vector>
-
-namespace {
-
-void skip_if_cuda_unavailable() {
-  if (!gpjson::cuda::device_available()) {
-    GTEST_SKIP() << "CUDA device unavailable";
-  }
-}
-
-} // namespace
 
 TEST(DeviceArrayTest, DefaultAndZeroByteArraysAreEmpty) {
   gpjson::cuda::DeviceArray empty;
@@ -37,7 +28,7 @@ TEST(DeviceArrayTest, DefaultAndZeroByteArraysAreEmpty) {
 }
 
 TEST(DeviceArrayTest, AllocationReportsRequestedByteSize) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::cuda::DeviceArray array(16);
   EXPECT_FALSE(array.empty());
@@ -46,7 +37,7 @@ TEST(DeviceArrayTest, AllocationReportsRequestedByteSize) {
 }
 
 TEST(DeviceArrayTest, CopyRoundTripPreservesData) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   std::vector<int> input{1, 2, 3, 4};
   std::vector<int> output(input.size(), 0);
@@ -59,7 +50,7 @@ TEST(DeviceArrayTest, CopyRoundTripPreservesData) {
 }
 
 TEST(DeviceArrayTest, MemsetClearsDeviceArray) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   std::vector<int> input{1, 2, 3, 4};
   std::vector<int> output(input.size(), -1);
@@ -73,7 +64,7 @@ TEST(DeviceArrayTest, MemsetClearsDeviceArray) {
 }
 
 TEST(DeviceArrayTest, MoveConstructorTransfersOwnership) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::cuda::DeviceArray source(16);
   void *source_ptr = source.data();
@@ -88,7 +79,7 @@ TEST(DeviceArrayTest, MoveConstructorTransfersOwnership) {
 }
 
 TEST(DeviceArrayTest, MoveAssignmentReplacesCurrentAllocation) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::cuda::DeviceArray source(16);
   void *source_ptr = source.data();
@@ -104,7 +95,7 @@ TEST(DeviceArrayTest, MoveAssignmentReplacesCurrentAllocation) {
 }
 
 TEST(DeviceArrayTest, OversizedCopyFromHostThrows) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::cuda::DeviceArray array(4);
   int value = 0;
@@ -114,7 +105,7 @@ TEST(DeviceArrayTest, OversizedCopyFromHostThrows) {
 }
 
 TEST(DeviceArrayTest, OversizedCopyToHostThrows) {
-  skip_if_cuda_unavailable();
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::cuda::DeviceArray array(4);
   int value = 0;
