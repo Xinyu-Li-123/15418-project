@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cuda_runtime_api.h>
+
 #include <cstddef>
+#include <span>
 
 namespace gpjson::cuda {
 
@@ -20,10 +23,20 @@ public:
   void *data();
   const void *data() const;
   size_t size_bytes() const;
+  bool empty() const;
+
+  void copy_from_host(const void *src, size_t bytes);
+  void copy_to_host(void *dst, size_t bytes) const;
+
+  void memset(int value);
 
 private:
   void *ptr_{nullptr};
   size_t size_bytes_{0};
 };
+
+void check(cudaError_t status, const char *context);
+bool device_available();
+void synchronize();
 
 } // namespace gpjson::cuda
