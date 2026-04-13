@@ -3,6 +3,7 @@
  */
 
 #include "gpjson/cuda/cuda.hpp"
+#include "gpjson/error/common.hpp"
 #include "gpjson/file/file.hpp"
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
@@ -53,6 +54,23 @@ private:
   cuda::DeviceArray device_file_partition_;
 };
 
+template <typename T>
+void copy_scalar_to_device(cuda::DeviceArray &array, size_t index,
+                           const T &value) {
+  cuda::check(cudaMemcpy(array.as<T>() + index, &value, sizeof(T),
+                         cudaMemcpyHostToDevice),
+              "cudaMemcpy scalar host to device");
+}
+
+template <typename T>
+T copy_scalar_from_device(const cuda::DeviceArray &array, size_t index) {
+  T value{};
+  cuda::check(cudaMemcpy(&value, array.as<const T>() + index, sizeof(T),
+                         cudaMemcpyDeviceToHost),
+              "cudaMemcpy scalar device to host");
+  return value;
+}
+
 struct NewlineStringIndices {
   NewlineIndex newline_index;
   StringIndex string_index;
@@ -68,15 +86,37 @@ NewlineStringIndices
 create_newline_and_string_index(bool combined,
                                 const OrigIndexBuilderContext &ctx) {
   LogInfo("Create newline and string index, combined=%d", combined);
-  // TODO: This should be computed by int-sum-* kernels
   cuda::DeviceArray newline_count_index_mem(ctx.num_cuda_threads() *
                                             sizeof(int));
   cuda::DeviceArray newline_index_offset_mem((ctx.num_cuda_threads() + 1) *
                                              sizeof(int));
+  if (combined) {
+    throw error::common::NotImplementedError(
+        "Combined newline and string index builder is not implemented!");
+  }
+
   kernels::orig::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>());
 
-  int num_lines = 5;
+  cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
+                                     ctx.reduction_block_size * sizeof(int));
+  const int reduction_threads =
+      ctx.reduction_grid_size * ctx.reduction_block_size;
+  kernels::orig::
+      int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          newline_count_index_mem.as<int>(), ctx.num_cuda_threads());
+  kernels::orig::int_sum_post_scan<<<1, 1>>>(
+      newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
+      reduction_threads, 1, int_sum_base_mem.as<int>());
+  kernels::orig::
+      int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
+          int_sum_base_mem.as<int>(), 1, newline_index_offset_mem.as<int>());
+
+  copy_scalar_to_device<int>(newline_index_offset_mem, 0, 1);
+  cuda::synchronize();
+  const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
+                                                     ctx.num_cuda_threads());
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
   cuda::DeviceArray string_index_mem(ctx.level_size());
 
