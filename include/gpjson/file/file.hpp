@@ -8,6 +8,12 @@ namespace gpjson::file {
 
 class PartitionView {
 public:
+  PartitionView() = default;
+  PartitionView(size_t partition_id,
+                size_t global_start_offset,
+                size_t global_end_offset,
+                const std::byte *data);
+
   size_t partition_id() const;
   size_t global_start_offset() const;
   size_t global_end_offset() const;
