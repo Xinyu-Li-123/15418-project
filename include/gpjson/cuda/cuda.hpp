@@ -24,6 +24,12 @@ public:
   size_t size_bytes() const;
   bool empty() const;
 
+  template <typename T> T *as() { return static_cast<T *>(ptr_); }
+
+  template <typename T> const T *as() const {
+    return static_cast<const T *>(ptr_);
+  }
+
   void copy_from_host(const void *src, size_t bytes);
   void copy_to_host(void *dst, size_t bytes) const;
 
