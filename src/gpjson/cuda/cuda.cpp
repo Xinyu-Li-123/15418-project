@@ -40,7 +40,7 @@ DeviceArray::DeviceArray(size_t bytes) : size_bytes_(bytes) {
 
 DeviceArray::~DeviceArray() {
   if (ptr_ != nullptr) {
-    check(cudaFree(ptr_), "cudaFree");
+    cudaFree(ptr_);
   }
 }
 
@@ -58,7 +58,7 @@ DeviceArray &DeviceArray::operator=(DeviceArray &&other) noexcept {
   // If I currently points to some device array, free my array before taking
   // other's array
   if (ptr_ != nullptr) {
-    check(cudaFree(ptr_), "cudaFree");
+    cudaFree(ptr_);
   }
 
   ptr_ = other.ptr_;

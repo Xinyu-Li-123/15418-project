@@ -3,7 +3,6 @@
 #include <cuda_runtime_api.h>
 
 #include <cstddef>
-#include <span>
 
 namespace gpjson::cuda {
 
