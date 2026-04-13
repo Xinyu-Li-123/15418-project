@@ -52,8 +52,8 @@ TEST(DeviceArrayTest, CopyRoundTripPreservesData) {
   std::vector<int> output(input.size(), 0);
   gpjson::cuda::DeviceArray array(input.size() * sizeof(int));
 
-  array.copy_from_host(input.data(), input.size());
-  array.copy_to_host(output.data(), output.size());
+  array.copy_from_host(input.data(), input.size() * sizeof(int));
+  array.copy_to_host(output.data(), output.size() * sizeof(int));
 
   EXPECT_EQ(output, input);
 }
@@ -65,9 +65,9 @@ TEST(DeviceArrayTest, MemsetClearsDeviceArray) {
   std::vector<int> output(input.size(), -1);
   gpjson::cuda::DeviceArray array(input.size() * sizeof(int));
 
-  array.copy_from_host(input.data(), input.size());
+  array.copy_from_host(input.data(), input.size() * sizeof(int));
   array.memset(0);
-  array.copy_to_host(output.data(), output.size());
+  array.copy_to_host(output.data(), output.size() * sizeof(int));
 
   EXPECT_EQ(output, std::vector<int>(input.size(), 0));
 }
