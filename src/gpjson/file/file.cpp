@@ -14,8 +14,6 @@ size_t PartitionView::size_bytes() const {
   return global_end_offset_ - global_start_offset_;
 }
 
-std::span<const std::byte> PartitionView::bytes() const {
-  return {data_, size_bytes()};
-}
+const void *PartitionView::bytes() const { return data_; }
 
 } // namespace gpjson::file
