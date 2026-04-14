@@ -6,13 +6,19 @@
 
 #include <cstddef>
 
-namespace gpjson {
-struct EngineOptions;
-}
-
 namespace gpjson::index {
 
 enum class IndexBuilderType { UNCOMBINED = 0, COMBINED, NO_ESCAPE_QUOTE };
+
+struct IndexBuilderOptions {
+  index::IndexBuilderType index_builder_type{
+      index::IndexBuilderType::UNCOMBINED};
+  size_t file_partition_size{0};
+  const int grid_size;
+  const int block_size;
+  const int reduction_grid_size;
+  const int reduction_block_size;
+};
 
 class IndexBuilder {
 public:
@@ -20,7 +26,7 @@ public:
 
   virtual BuiltIndices build(const file::PartitionView &partition_view,
                              size_t max_depth,
-                             const gpjson::EngineOptions &options) const = 0;
+                             const IndexBuilderOptions &options) const = 0;
 };
 
 class UncombinedIndexBuilder final : public IndexBuilder {
@@ -29,7 +35,7 @@ public:
 
   BuiltIndices build(const file::PartitionView &partition_view,
                      size_t max_depth,
-                     const gpjson::EngineOptions &options) const override;
+                     const IndexBuilderOptions &options) const override;
 
 private:
   const file::FileReader &file_reader_;
@@ -41,7 +47,7 @@ public:
 
   BuiltIndices build(const file::PartitionView &partition_view,
                      size_t max_depth,
-                     const gpjson::EngineOptions &options) const override;
+                     const IndexBuilderOptions &options) const override;
 
 private:
   const file::FileReader &file_reader_;

@@ -7,7 +7,7 @@ project(gpjson-cpp
 
 include(CTest)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -20,17 +20,13 @@ endif()
 
 option(GPJSON_CPP_DEBUG "Enable GPJSON debug logging and assertions" OFF)
 
-add_library(gpjson-cpp_lib
-  src/gpjson/cuda/cuda.cpp
-  src/gpjson/engine.cpp
-  src/gpjson/file/file.cpp
-  src/gpjson/file/file_reader.cpp
-  src/gpjson/index/index.cpp
-  src/gpjson/index/index_builder.cpp
-  src/gpjson/query/query.cpp
-  src/gpjson/query/query_compiler.cpp
-  src/gpjson/query/query_executor.cpp
+file(GLOB_RECURSE GPJSON_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpjson/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpjson/*.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpjson/*.cu_inl"
 )
+
+add_library(gpjson-cpp_lib ${GPJSON_SOURCES})
 
 target_include_directories(gpjson-cpp_lib
   PUBLIC

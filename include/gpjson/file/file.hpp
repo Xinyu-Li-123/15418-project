@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <span>
 #include <string>
 
 namespace gpjson::file {
@@ -12,7 +11,7 @@ public:
   size_t global_start_offset() const;
   size_t global_end_offset() const;
   size_t size_bytes() const;
-  std::span<const std::byte> bytes() const;
+  const void *bytes() const;
 
 private:
   size_t partition_id_{0};

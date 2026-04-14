@@ -18,10 +18,11 @@ Engine::query(const std::string &file_path,
   query::QueryExecutor query_executor(options);
 
   file::FileReader file_reader(file_path);
-  file_reader.create_partitions(options.file_partition_size);
+  file_reader.create_partitions(
+      options.index_builder_options.file_partition_size);
 
   std::unique_ptr<index::IndexBuilder> index_builder;
-  switch (options.index_builder_type) {
+  switch (options.index_builder_options.index_builder_type) {
   case index::IndexBuilderType::UNCOMBINED:
     index_builder =
         std::make_unique<index::UncombinedIndexBuilder>(file_reader);
@@ -49,8 +50,9 @@ Engine::query(const std::string &file_path,
   query::BatchQueryResult full_results(compiled_queries.size());
 
   for (const auto &partition_view : file_reader.get_partition_views()) {
-    index::BuiltIndices built_indices = index_builder->build(
-        partition_view, compiled_queries.get_max_depth(), options);
+    index::BuiltIndices built_indices =
+        index_builder->build(partition_view, compiled_queries.get_max_depth(),
+                             options.index_builder_options);
 
     query::BatchQueryResult part_result = query_executor.execute_batch(
         compiled_queries, partition_view, built_indices);
