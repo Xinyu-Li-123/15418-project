@@ -2,10 +2,10 @@
 
 namespace gpjson::query {
 
-IRByteInputBuffer::IRByteInputBuffer(std::span<const std::byte> bytes)
-    : bytes_(bytes) {}
+IRByteInputBuffer::IRByteInputBuffer(const std::byte *bytes, size_t size)
+    : bytes_(bytes), size_(size) {}
 
-bool IRByteInputBuffer::has_next() const { return position_ < bytes_.size(); }
+bool IRByteInputBuffer::has_next() const { return position_ < size_; }
 
 QueryOpcode IRByteInputBuffer::read_opcode() {
   return static_cast<QueryOpcode>(read_byte());
@@ -36,7 +36,7 @@ std::string IRByteInputBuffer::read_string() {
 }
 
 std::byte IRByteInputBuffer::read_byte() {
-  if (position_ >= bytes_.size()) {
+  if (position_ >= size_) {
     throw error::query::QueryExecutionError("Unexpected end of query IR");
   }
   return bytes_[position_++];

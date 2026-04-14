@@ -5,7 +5,7 @@ namespace gpjson::file {
 PartitionView::PartitionView(size_t partition_id,
                              size_t global_start_offset,
                              size_t global_end_offset,
-                             const std::byte *data)
+                             const void *data)
     : partition_id_(partition_id), global_start_offset_(global_start_offset),
       global_end_offset_(global_end_offset), data_(data) {}
 
@@ -21,8 +21,6 @@ size_t PartitionView::size_bytes() const {
   return global_end_offset_ - global_start_offset_;
 }
 
-std::span<const std::byte> PartitionView::bytes() const {
-  return {data_, size_bytes()};
-}
+const void *PartitionView::bytes() const { return data_; }
 
 } // namespace gpjson::file

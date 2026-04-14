@@ -45,7 +45,7 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
       break;
     }
 
-    const std::byte *partition_ptr =
+    const void *partition_ptr =
         base_ptr == nullptr ? nullptr : base_ptr + current_partition_start;
     partitions_.push_back(PartitionView{partition_id, current_partition_start,
                              next_partition_start - 1, partition_ptr});
@@ -54,7 +54,7 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
     ++partition_id;
   }
 
-  const std::byte *partition_ptr =
+  const void *partition_ptr =
       base_ptr == nullptr ? nullptr : base_ptr + current_partition_start;
   partitions_.push_back(PartitionView{partition_id, current_partition_start,
                            metadata_.file_size_bytes, partition_ptr});

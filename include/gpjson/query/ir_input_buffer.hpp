@@ -4,14 +4,13 @@
 #include "gpjson/query/query.hpp"
 
 #include <cstddef>
-#include <span>
 #include <string>
 
 namespace gpjson::query {
 
 class IRByteInputBuffer {
 public:
-  explicit IRByteInputBuffer(std::span<const std::byte> bytes);
+  IRByteInputBuffer(const std::byte *bytes, size_t size);
 
   bool has_next() const;
   QueryOpcode read_opcode();
@@ -21,7 +20,8 @@ public:
 private:
   std::byte read_byte();
 
-  std::span<const std::byte> bytes_;
+  const std::byte *bytes_{nullptr};
+  size_t size_{0};
   size_t position_{0};
 };
 
