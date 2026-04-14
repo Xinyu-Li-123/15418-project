@@ -82,4 +82,13 @@ TEST(IndexBuilderTest, BuildsStringIndex) {
   EXPECT_EQ(gpjson::test::index::copy_index_words(string_index), expected);
 }
 
+TEST(ExpectedIndexTest, ComputesExpectedStringIndex) {
+  const std::string data = "\"a\\\"b\"  \"x\"";
+  // Note that the bit mask should be writen from right to left, i.e. oracle[0]
+  // is flag for data[-1], and oracle[-1] is flag for data[0]
+  const std::vector<long> oracles{0b01100011111};
+
+  EXPECT_EQ(expected_string_index(data), oracles);
+}
+
 } // namespace

@@ -49,4 +49,11 @@ TEST(IndexBuilderTest, BuildsNewlineIndex) {
   EXPECT_EQ(gpjson::test::index::copy_index_words(newline_index), expected);
 }
 
+TEST(ExpectedIndexTest, ComputesExpectedNewlineIndex) {
+  const std::string data = "first\nsecond\nthird";
+  const std::vector<long> oracle{0, 5, 12};
+
+  EXPECT_EQ(expected_newline_index(data), oracle);
+}
+
 } // namespace
