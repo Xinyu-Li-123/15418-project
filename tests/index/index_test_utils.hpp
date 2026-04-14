@@ -12,6 +12,8 @@
 #include <cuda_runtime_api.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +21,19 @@
 namespace gpjson::test::index {
 
 inline constexpr int kMaxDepth = 8;
+
+inline long word_from_bits(uint64_t bits) {
+  long word = 0;
+  static_assert(sizeof(word) == sizeof(bits));
+  std::memcpy(&word, &bits, sizeof(word));
+  return word;
+}
+
+inline uint64_t bit_for(size_t offset) { return uint64_t{1} << (offset % 64); }
+
+inline size_t level_size_for(size_t file_size) {
+  return (file_size + 64 - 1) / 64;
+}
 
 /* Create a PartitionView from a cpp string */
 class StaticPartition {

@@ -13,22 +13,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <string>
 #include <vector>
 
 namespace {
-
-long word_from_bits(uint64_t bits) {
-  long word = 0;
-  static_assert(sizeof(word) == sizeof(bits));
-  std::memcpy(&word, &bits, sizeof(word));
-  return word;
-}
-
-uint64_t bit_for(size_t offset) { return uint64_t{1} << (offset % 64); }
-
-size_t level_size_for(size_t file_size) { return (file_size + 64 - 1) / 64; }
 
 bool is_escaped_quote(const std::string &data, size_t quote_offset) {
   size_t slash_count = 0;
@@ -39,25 +27,26 @@ bool is_escaped_quote(const std::string &data, size_t quote_offset) {
 }
 
 std::vector<long> expected_string_index(const std::string &data) {
-  std::vector<uint64_t> words(level_size_for(data.size()), 0);
+  std::vector<uint64_t> words(gpjson::test::index::level_size_for(data.size()),
+                              0);
   bool in_string = false;
 
   for (size_t i = 0; i < data.size(); ++i) {
     if (data[i] == '"' && !is_escaped_quote(data, i)) {
       if (!in_string) {
-        words[i / 64] |= bit_for(i);
+        words[i / 64] |= gpjson::test::index::bit_for(i);
         in_string = true;
       } else {
         in_string = false;
       }
     } else if (in_string) {
-      words[i / 64] |= bit_for(i);
+      words[i / 64] |= gpjson::test::index::bit_for(i);
     }
   }
 
   std::vector<long> expected;
   for (uint64_t word : words) {
-    expected.push_back(word_from_bits(word));
+    expected.push_back(gpjson::test::index::word_from_bits(word));
   }
   return expected;
 }
