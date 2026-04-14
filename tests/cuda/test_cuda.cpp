@@ -4,7 +4,7 @@
 
 #include "gpjson/cuda/cuda.hpp"
 #include "gpjson/cuda/error.hpp"
-#include "test_utils.hpp"
+#include "utils/utils.hpp"
 
 #include <gtest/gtest.h>
 

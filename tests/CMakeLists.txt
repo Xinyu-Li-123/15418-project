@@ -6,8 +6,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+file(GLOB_RECURSE GPJSON_TESTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+)
+
 add_executable(gpjson-cuda_tests
-  test_cuda.cpp
+  ${GPJSON_TESTS}
+)
+
+target_include_directories(gpjson-cuda_tests
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(gpjson-cuda_tests

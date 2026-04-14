@@ -2,6 +2,7 @@
 .vscode/
 build/
 datasets/
+Testing/
 
 compile_commands.json
 .codex
