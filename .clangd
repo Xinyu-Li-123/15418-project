@@ -1,0 +1,15 @@
+CompileFlags:
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --expt-relaxed-constexpr
+    - -rdc=true
+    - -gencode
+    - arch=*
+    - code=*
+    - --generate-code=*
+    - --options-file
+    - --compiler-options
+    - -Xcompiler
+  Add:
+    - --cuda-path=/usr/local/cuda
+    - --cuda-gpu-arch=sm_75
