@@ -1,10 +1,20 @@
-add_executable(gpjson-cpp_tests
-  test_gpjson_dummy.cpp
+include(FetchContent)
+
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/heads/main.zip
+)
+FetchContent_MakeAvailable(googletest)
+
+add_executable(gpjson-cuda_tests
+  test_cuda.cpp
 )
 
-target_link_libraries(gpjson-cpp_tests
+target_link_libraries(gpjson-cuda_tests
   PRIVATE
     gpjson-cpp_lib
+    GTest::gtest_main
 )
 
-add_test(NAME gpjson-cpp_tests COMMAND gpjson-cpp_tests)
+include(GoogleTest)
+gtest_discover_tests(gpjson-cuda_tests)

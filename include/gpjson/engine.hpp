@@ -10,9 +10,7 @@
 namespace gpjson {
 
 struct EngineOptions {
-  index::IndexBuilderType index_builder_type{
-      index::IndexBuilderType::UNCOMBINED};
-  size_t file_partition_size{0};
+  index::IndexBuilderOptions index_builder_options;
 };
 
 class Engine {
