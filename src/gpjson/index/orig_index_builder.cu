@@ -3,7 +3,6 @@
  */
 
 #include "gpjson/cuda/cuda.hpp"
-#include "gpjson/error/common.hpp"
 #include "gpjson/file/file.hpp"
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
@@ -86,28 +85,35 @@ NewlineStringIndices
 create_newline_and_string_index(bool combined,
                                 const OrigIndexBuilderContext &ctx) {
   LogInfo("Create newline and string index, combined=%d", combined);
+  cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
+  cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
+                                           sizeof(char));
   cuda::DeviceArray newline_count_index_mem(ctx.num_cuda_threads() *
                                             sizeof(int));
   cuda::DeviceArray newline_index_offset_mem((ctx.num_cuda_threads() + 1) *
                                              sizeof(int));
   if (combined) {
-    throw error::common::NotImplementedError(
-        "Combined newline and string index builder is not implemented!");
+    kernels::orig::combined_escape_carry_newline_count_index<<<
+        ctx.grid_size, ctx.block_size>>>(ctx.device_file(), ctx.file_size,
+                                         string_carry_index_mem.as<char>(),
+                                         newline_count_index_mem.as<int>());
+  } else {
+    kernels::orig::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>());
+    kernels::orig::escape_carry_index<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>());
   }
-
-  kernels::orig::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
-      ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>());
 
   cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
                                      ctx.reduction_block_size * sizeof(int));
-  const int reduction_threads =
+  const int num_reduction_cuda_threads =
       ctx.reduction_grid_size * ctx.reduction_block_size;
   kernels::orig::
       int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads());
   kernels::orig::int_sum_post_scan<<<1, 1>>>(
       newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
-      reduction_threads, 1, int_sum_base_mem.as<int>());
+      num_reduction_cuda_threads, 1, int_sum_base_mem.as<int>());
   kernels::orig::
       int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
@@ -118,11 +124,44 @@ create_newline_and_string_index(bool combined,
   const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
                                                      ctx.num_cuda_threads());
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
-  cuda::DeviceArray string_index_mem(ctx.level_size());
+  cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
 
-  kernels::orig::newline_index<<<ctx.grid_size, ctx.block_size>>>(
-      ctx.device_file(), ctx.file_size, newline_index_offset_mem.as<int>(),
-      newline_index_mem.as<long>());
+  if (combined) {
+    escape_index_mem.memset(0);
+    kernels::orig::
+        combined_escape_newline_index<<<ctx.grid_size, ctx.block_size>>>(
+            ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
+            newline_index_offset_mem.as<int>(), escape_index_mem.as<long>(),
+            newline_index_mem.as<long>());
+  } else {
+    kernels::orig::escape_index<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
+        escape_index_mem.as<long>());
+    kernels::orig::newline_index<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_file(), ctx.file_size, newline_index_offset_mem.as<int>(),
+        newline_index_mem.as<long>());
+  }
+
+  kernels::orig::quote_index<<<ctx.grid_size, ctx.block_size>>>(
+      ctx.device_file(), ctx.file_size, escape_index_mem.as<long>(),
+      string_index_mem.as<long>(), string_carry_index_mem.as<char>());
+
+  cuda::DeviceArray xor_base_mem(ctx.reduction_grid_size *
+                                 ctx.reduction_block_size * sizeof(char));
+  kernels::orig::
+      xor_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          string_carry_index_mem.as<char>(), ctx.num_cuda_threads());
+  kernels::orig::xor_post_scan<<<1, 1>>>(
+      string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
+      num_reduction_cuda_threads, xor_base_mem.as<char>());
+  kernels::orig::
+      xor_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
+          xor_base_mem.as<char>());
+
+  kernels::orig::string_index<<<ctx.grid_size, ctx.block_size>>>(
+      string_index_mem.as<long>(), ctx.level_size(),
+      string_carry_index_mem.as<char>());
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
