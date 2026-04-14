@@ -170,9 +170,46 @@ create_newline_and_string_index(bool combined,
 }
 
 LeveledBitmapIndex
-create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx) {
+create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
+                            const StringIndex &string_index) {
   LogInfo("Create leveled bitmap index");
-  return LeveledBitmapIndex{};
+  cuda::DeviceArray carry_index_mem(ctx.num_cuda_threads() * sizeof(char));
+  kernels::orig::leveled_bitmaps_carry_index<<<ctx.grid_size, ctx.block_size>>>(
+      ctx.device_file(), ctx.file_size,
+      static_cast<const long *>(string_index.data()),
+      carry_index_mem.as<char>());
+
+  cuda::DeviceArray carry_index_with_offset_mem((ctx.num_cuda_threads() + 1) *
+                                                sizeof(char));
+  copy_scalar_to_device<char>(carry_index_with_offset_mem, 0, -1);
+
+  cuda::DeviceArray char_sum_base_mem(ctx.reduction_grid_size *
+                                      ctx.reduction_block_size * sizeof(char));
+  const int num_reduction_cuda_threads =
+      ctx.reduction_grid_size * ctx.reduction_block_size;
+  kernels::orig::
+      char_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          carry_index_mem.as<char>(), ctx.num_cuda_threads());
+  kernels::orig::char_sum_post_scan<<<1, 1>>>(
+      carry_index_mem.as<char>(), ctx.num_cuda_threads(),
+      num_reduction_cuda_threads, static_cast<char>(-1),
+      char_sum_base_mem.as<char>());
+  kernels::orig::
+      char_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
+          carry_index_mem.as<char>(), ctx.num_cuda_threads(),
+          char_sum_base_mem.as<char>(), 1,
+          carry_index_with_offset_mem.as<char>());
+
+  cuda::DeviceArray leveled_bitmap_index_mem(ctx.level_size() * ctx.max_depth *
+                                             sizeof(long));
+  leveled_bitmap_index_mem.memset(0);
+  kernels::orig::leveled_bitmaps_index<<<ctx.grid_size, ctx.block_size>>>(
+      ctx.device_file(), ctx.file_size,
+      static_cast<const long *>(string_index.data()),
+      carry_index_with_offset_mem.as<char>(),
+      leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth);
+
+  return LeveledBitmapIndex(std::move(leveled_bitmap_index_mem), ctx.max_depth);
 }
 } // namespace
 } // namespace gpjson::index
@@ -194,7 +231,7 @@ UncombinedIndexBuilder::build(const file::PartitionView &partition_view,
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(false, ctx);
-  auto leveled_bitmap_index = create_leveled_bitmap_index(ctx);
+  auto leveled_bitmap_index = create_leveled_bitmap_index(ctx, string_index);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }
@@ -213,7 +250,7 @@ CombinedIndexBuilder::build(const file::PartitionView &partition_view,
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(true, ctx);
-  auto leveled_bitmap_index = create_leveled_bitmap_index(ctx);
+  auto leveled_bitmap_index = create_leveled_bitmap_index(ctx, string_index);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }

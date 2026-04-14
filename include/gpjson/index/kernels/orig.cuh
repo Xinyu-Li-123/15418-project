@@ -41,4 +41,22 @@ __global__ void xor_rebase(char *charArr, int n, char *base);
 
 __global__ void string_index(long *stringIndex, int stringIndexSize,
                              char *quoteCarryIndex);
+
+__global__ void leveled_bitmaps_carry_index(const char *file, int fileSize,
+                                            const long *stringIndex,
+                                            char *leveledBitmapsAuxIndex);
+
+__global__ void char_sum_pre_scan(char *charArr, int n);
+
+__global__ void char_sum_post_scan(char *charArr, int n, int stride,
+                                   char startingValue, char *base);
+
+__global__ void char_sum_rebase(char *charArr, int n, char *base, int offset,
+                                char *charNewArr);
+
+__global__ void leveled_bitmaps_index(const char *file, int fileSize,
+                                      const long *stringIndex,
+                                      char *leveledBitmapsAuxIndex,
+                                      long *leveledBitmapsIndex, int levelSize,
+                                      int numLevels);
 } // namespace gpjson::index::kernels::orig
