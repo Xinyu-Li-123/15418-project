@@ -36,3 +36,17 @@ target_link_libraries(gpjson-query_compiler_tests
 
 include(GoogleTest)
 gtest_discover_tests(gpjson-query_compiler_tests)
+
+if(TARGET gpjson-cpp_lib)
+  add_executable(gpjson-query_executor_tests
+    query_executor_test.cpp
+  )
+
+  target_link_libraries(gpjson-query_executor_tests
+    PRIVATE
+      gpjson-cpp_lib
+      GTest::gtest_main
+  )
+
+  gtest_discover_tests(gpjson-query_executor_tests)
+endif()
