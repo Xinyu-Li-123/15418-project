@@ -6,8 +6,15 @@
 #include "gpjson/file/file.hpp"
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
-#include "gpjson/index/kernels/orig.cuh"
 #include "gpjson/log/log.hpp"
+
+namespace gpjson::index::kernels::orig {
+__global__ void newline_count_index(const char *file, int fileSize,
+                                    int *newlineCountIndex);
+
+__global__ void newline_index(const char *file, int fileSize,
+                              int *newlineCountIndex, long *newlineIndex);
+} // namespace gpjson::index::kernels::orig
 
 namespace gpjson::index {
 namespace {
