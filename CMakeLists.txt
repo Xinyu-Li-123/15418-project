@@ -69,6 +69,13 @@ target_link_libraries(gpjson-cpp_lib PUBLIC CUDA::cudart)
 add_executable(gpjson-cpp apps/main.cpp)
 target_link_libraries(gpjson-cpp PRIVATE gpjson-cpp_lib)
 
+add_executable(gpjson-twitter-remove-query apps/twitter_remove_query.cpp)
+target_link_libraries(gpjson-twitter-remove-query PRIVATE gpjson-cpp_lib)
+target_compile_definitions(gpjson-twitter-remove-query
+  PRIVATE
+    GPJSON_PROJECT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
