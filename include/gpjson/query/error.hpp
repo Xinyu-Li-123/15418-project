@@ -9,4 +9,14 @@ public:
   using GpJSONError::GpJSONError;
 };
 
+class UnsupportedQueryError : public gpjson::error::GpJSONError {
+public:
+  using GpJSONError::GpJSONError;
+};
+
+class QueryExecutionError : public gpjson::error::GpJSONError {
+public:
+  using GpJSONError::GpJSONError;
+};
+
 } // namespace gpjson::error::query

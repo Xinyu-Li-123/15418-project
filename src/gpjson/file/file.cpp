@@ -2,6 +2,13 @@
 
 namespace gpjson::file {
 
+PartitionView::PartitionView(size_t partition_id,
+                             size_t global_start_offset,
+                             size_t global_end_offset,
+                             const void *data)
+    : partition_id_(partition_id), global_start_offset_(global_start_offset),
+      global_end_offset_(global_end_offset), data_(data) {}
+
 size_t PartitionView::partition_id() const { return partition_id_; }
 
 size_t PartitionView::global_start_offset() const {

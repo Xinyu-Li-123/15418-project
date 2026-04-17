@@ -15,7 +15,9 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 75)
+  # Build real device code for every major architecture nvcc supports so local
+  # runs do not depend on PTX JIT compatibility with the installed driver.
+  set(CMAKE_CUDA_ARCHITECTURES all-major)
 endif()
 
 option(GPJSON_CPP_DEBUG "Enable GPJSON debug logging and assertions" OFF)
@@ -28,6 +30,11 @@ file(GLOB_RECURSE GPJSON_SOURCES CONFIGURE_DEPENDS
 
 add_library(gpjson-cpp_lib ${GPJSON_SOURCES})
 
+set_source_files_properties(
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/gpjson/query/kernels/orig/query_executor_host.cpp
+  PROPERTIES LANGUAGE CUDA
+)
+
 target_include_directories(gpjson-cpp_lib
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -36,8 +43,11 @@ target_include_directories(gpjson-cpp_lib
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_compile_features(gpjson-cpp_lib PUBLIC cxx_std_20)
-
+set_target_properties(gpjson-cpp_lib PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
 if(GPJSON_CPP_DEBUG)
   target_compile_definitions(gpjson-cpp_lib PUBLIC GPJSON_CPP_DEBUG)
 endif()

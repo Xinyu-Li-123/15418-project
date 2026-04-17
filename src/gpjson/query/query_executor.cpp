@@ -1,18 +1,21 @@
 #include "gpjson/query/query_executor.hpp"
 
+#include "gpjson/engine.hpp"
+#include "gpjson/query/kernels/orig.hpp"
+
 namespace gpjson::query {
 
-QueryExecutor::QueryExecutor(const gpjson::EngineOptions &options) {
-  (void)options;
-}
+QueryExecutor::QueryExecutor(const gpjson::EngineOptions &options)
+    : grid_size_(options.index_builder_options.grid_size),
+      block_size_(options.index_builder_options.block_size) {}
 
 BatchQueryResult
 QueryExecutor::execute_batch(const BatchCompiledQuery &compiled_queries,
                              const file::PartitionView &partition_view,
                              const index::BuiltIndices &built_indices) const {
-  (void)partition_view;
-  (void)built_indices;
-  return BatchQueryResult(compiled_queries.size());
+  return kernels::orig::execute_batch(
+      compiled_queries, partition_view, built_indices,
+      kernels::orig::QueryExecutorOptions{grid_size_, block_size_});
 }
 
 } // namespace gpjson::query

@@ -7,8 +7,27 @@
 
 namespace gpjson::query {
 
+enum class QueryOpcode : unsigned char {
+  END = 0,
+  STORE_RESULT = 1,
+  MOVE_UP = 2,
+  MOVE_DOWN = 3,
+  MOVE_TO_KEY = 4,
+  MOVE_TO_INDEX = 5,
+  MOVE_TO_INDEX_REVERSE = 6,
+  MARK_POSITION = 7,
+  RESET_POSITION = 8,
+  EXPRESSION_STRING_EQUALS = 9,
+};
+
 class CompiledQuery {
 public:
+  CompiledQuery() = default;
+  CompiledQuery(std::string query_text,
+                std::vector<std::byte> ir_bytes,
+                size_t max_depth,
+                size_t num_result_slots);
+
   const std::string &query_text() const;
   const std::vector<std::byte> &ir_bytes() const;
   size_t max_depth() const;
@@ -36,6 +55,7 @@ private:
 struct QueryOffset {
   std::optional<size_t> start;
   std::optional<size_t> end;
+  std::optional<std::string> json_text;
 };
 
 class LineQueryResult {
@@ -62,13 +82,16 @@ class BatchQueryResult {
 public:
   explicit BatchQueryResult(size_t num_queries);
 
+  void add_line_result(size_t query_index, LineQueryResult line_result);
   void merge(const BatchQueryResult &other);
+  void set_query_text(size_t query_index, std::string query_text);
   MaterializedBatchResult materialize() const;
   size_t num_queries() const;
   const std::vector<QueryResult> &queries() const;
 
 private:
   std::vector<QueryResult> queries_;
+  std::vector<std::string> query_texts_;
 };
 
 class MaterializedValue {

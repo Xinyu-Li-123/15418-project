@@ -17,6 +17,10 @@ public:
   const FileMetadata &metadata() const;
 
 private:
+  void load_file_bytes();
+  size_t find_next_partition_start(size_t current_partition_start,
+                                   size_t partition_size_bytes) const;
+
   std::string file_path_;
   FileMetadata metadata_;
   std::vector<std::byte> mapped_bytes_;

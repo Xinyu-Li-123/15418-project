@@ -18,5 +18,9 @@ public:
   execute_batch(const BatchCompiledQuery &compiled_queries,
                 const file::PartitionView &partition_view,
                 const index::BuiltIndices &built_indices) const;
+
+private:
+  int grid_size_{0};
+  int block_size_{256};
 };
 } // namespace gpjson::query
