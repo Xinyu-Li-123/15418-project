@@ -97,6 +97,9 @@ MaterializedBatchResult BatchQueryResult::materialize() const {
         }
         materialized_line.add_value(MaterializedValue(*offset.json_text));
       }
+      if (materialized_line.values().empty()) {
+        continue;
+      }
       query_result.add_line_result(std::move(materialized_line));
     }
     batch_result.add_query_result(std::move(query_result));

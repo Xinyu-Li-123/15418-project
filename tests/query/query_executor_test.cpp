@@ -26,12 +26,6 @@ using gpjson::query::MaterializedBatchResult;
 using gpjson::query::QueryCompiler;
 using gpjson::query::QueryExecutor;
 
-void skip_if_cuda_unavailable() {
-  if (!gpjson::cuda::device_available()) {
-    GTEST_SKIP() << "CUDA device unavailable";
-  }
-}
-
 void set_bit(std::vector<long> &bitmap, size_t position) {
   const size_t word_index = position / 64U;
   const size_t bit_index = position % 64U;
@@ -159,7 +153,9 @@ void print_materialized_result(const MaterializedBatchResult &materialized) {
 } // namespace
 
 TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
-  skip_if_cuda_unavailable();
+  if (!gpjson::cuda::device_available()) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
 
   // Copied from /home/moratoryvan/gpjson/test/test.json.
   const std::string json_text =
@@ -193,4 +189,33 @@ TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
   ASSERT_EQ(materialized.queries()[1].lines()[0].values().size(), 1U);
   EXPECT_EQ(materialized.queries()[1].lines()[0].values()[0].json_text(),
             "\"Herman Melville\"");
+}
+
+TEST(QueryExecutorTest, MaterializedResultsSkipUnmatchedLines) {
+  if (!gpjson::cuda::device_available()) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
+
+  const std::string json_text =
+      R"({"store":{"book":[{"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":"8.95"},{"category":"fiction","author":"Herman Melville","title":"Moby Dick","isbn":"0-553-21311-3","price":"8.99"},{"category":"fiction","author":"J.R.R. Tolkien","title":"The Lord of the Rings","isbn":"0-395-19395-8","price":"22.99"}],"bicycle":{"color":"red","price":"19.95"}},"expensive":"10"})";
+
+  const PartitionView partition_view(0, 0, json_text.size(), json_text.data());
+  BuiltIndices built_indices = build_single_line_indices(json_text);
+
+  gpjson::EngineOptions options{};
+  QueryCompiler compiler(options);
+  BatchCompiledQuery compiled_queries;
+  compiled_queries.add(compiler.compile("$.store.magazine", options));
+
+  QueryExecutor executor(options);
+  const auto batch_result =
+      executor.execute_batch(compiled_queries, partition_view, built_indices);
+  const MaterializedBatchResult materialized = batch_result.materialize();
+
+  ASSERT_EQ(batch_result.queries().size(), 1U);
+  ASSERT_EQ(batch_result.queries()[0].lines().size(), 1U);
+
+  ASSERT_EQ(materialized.queries().size(), 1U);
+  EXPECT_EQ(materialized.queries()[0].query_text(), "$.store.magazine");
+  EXPECT_TRUE(materialized.queries()[0].lines().empty());
 }

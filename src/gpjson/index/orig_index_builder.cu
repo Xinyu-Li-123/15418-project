@@ -7,7 +7,7 @@
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
 #include "gpjson/log/log.hpp"
-
+#include "gpjson/index/kernels/orig.cuh"
 namespace gpjson::index::kernels::orig {
 __global__ void newline_count_index(const char *file, int fileSize,
                                     int *newlineCountIndex);
