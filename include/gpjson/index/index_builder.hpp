@@ -14,10 +14,10 @@ struct IndexBuilderOptions {
   index::IndexBuilderType index_builder_type{
       index::IndexBuilderType::UNCOMBINED};
   size_t file_partition_size{0};
-  const int grid_size;
-  const int block_size;
-  const int reduction_grid_size;
-  const int reduction_block_size;
+  int grid_size{0};
+  int block_size{0};
+  int reduction_grid_size{0};
+  int reduction_block_size{0};
 };
 
 class IndexBuilder {
