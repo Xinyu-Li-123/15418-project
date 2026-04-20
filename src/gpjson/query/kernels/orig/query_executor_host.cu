@@ -12,11 +12,11 @@
 #include <vector>
 
 namespace gpjson::query::kernels::orig {
-__global__ void
-execute_query_kernel(const char *file, int file_size, const long *newline_index,
-                     int newline_index_size, const long *string_index,
-                     const long *leveled_bitmaps_index, int level_size,
-                     const unsigned char *query, int num_results, int *result);
+__global__ void query(const char *file, int file_size,
+                      const long *newline_index, int newline_index_size,
+                      const long *string_index,
+                      const long *leveled_bitmaps_index, int level_size,
+                      const unsigned char *query, int num_results, int *result);
 
 namespace {
 
@@ -195,7 +195,7 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
     LogInfo(
         "Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
         ctx.grid_size, ctx.block_size, num_lines, num_results, ctx.file_size);
-    execute_query_kernel<<<ctx.grid_size, ctx.block_size>>>(
+    query<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_partition(), ctx.file_size,
         static_cast<const long *>(built_indices.get_newline_index().data()),
         num_lines,

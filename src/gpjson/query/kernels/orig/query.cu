@@ -16,10 +16,8 @@ namespace {
 #define OPCODE_RESET_POSITION 0x08
 #define OPCODE_EXPRESSION_STRING_EQUALS 0x09
 
-__device__ int find_next_structural_char(const long *ext_index,
-                                         int level_end,
-                                         int line_index,
-                                         int current_level,
+__device__ int find_next_structural_char(const long *ext_index, int level_end,
+                                         int line_index, int current_level,
                                          int level_size) {
   long index = ext_index[level_size * current_level + line_index / 64];
   while (index == 0 && line_index < level_end) {
@@ -37,8 +35,7 @@ __device__ int find_next_structural_char(const long *ext_index,
 }
 
 __device__ int find_previous_structural_char(const long *ext_index,
-                                             int level_start,
-                                             int line_index,
+                                             int level_start, int line_index,
                                              int current_level,
                                              int level_size) {
   long index = ext_index[level_size * current_level + line_index / 64];
@@ -70,16 +67,12 @@ __device__ int read_varint(const unsigned char *query, int *query_pos) {
 
 } // namespace
 
-__global__ void execute_query_kernel(const char *file,
-                                     int file_size,
-                                     const long *newline_index,
-                                     int newline_index_size,
-                                     const long *string_index,
-                                     const long *leveled_bitmaps_index,
-                                     int level_size,
-                                     const unsigned char *query,
-                                     int num_results,
-                                     int *result) {
+__global__ void query(const char *file, int file_size,
+                      const long *newline_index, int newline_index_size,
+                      const long *string_index,
+                      const long *leveled_bitmaps_index, int level_size,
+                      const unsigned char *query, int num_results,
+                      int *result) {
   const int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
   const int stride = blockDim.x * gridDim.x;
 
@@ -155,14 +148,16 @@ __global__ void execute_query_kernel(const char *file,
         assert(num_results_index < num_results);
 
         int end_str = level_end[current_level];
-        while (file[line_index] == ' ' && line_index < level_end[current_level]) {
+        while (file[line_index] == ' ' &&
+               line_index < level_end[current_level]) {
           ++line_index;
         }
         while (end_str > line_index && file[end_str - 1] == ' ') {
           --end_str;
         }
 
-        const int result_index = file_index * 2 * num_results + num_results_index * 2;
+        const int result_index =
+            file_index * 2 * num_results + num_results_index * 2;
         result[result_index] = line_index;
         result[result_index + 1] = end_str;
         assert(result[result_index] <= result[result_index + 1]);
@@ -180,10 +175,10 @@ __global__ void execute_query_kernel(const char *file,
         ++current_level;
         if (level_end[current_level] == -1) {
           for (int end_candidate = line_index + 1;
-               end_candidate <= level_end[current_level - 1];
-               ++end_candidate) {
-            const long index = leveled_bitmaps_index
-                [level_size * (current_level - 1) + end_candidate / 64];
+               end_candidate <= level_end[current_level - 1]; ++end_candidate) {
+            const long index =
+                leveled_bitmaps_index[level_size * (current_level - 1) +
+                                      end_candidate / 64];
             if (index == 0) {
               end_candidate += 64 - (end_candidate % 64) - 1;
               continue;
@@ -375,7 +370,8 @@ __global__ void execute_query_kernel(const char *file,
         key = query + query_pos;
         query_pos += key_len;
 
-        while (file[line_index] == ' ' && line_index < level_end[current_level]) {
+        while (file[line_index] == ' ' &&
+               line_index < level_end[current_level]) {
           ++line_index;
         }
 
