@@ -15,7 +15,6 @@ FileReader::FileReader(std::string file_path)
   metadata_.file_path = file_path_;
 }
 
-
 void FileReader::create_partitions(size_t partition_size_bytes) {
 
   load_file_bytes();
@@ -25,11 +24,10 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
   const std::byte *base_ptr =
       mapped_bytes_.empty() ? nullptr : mapped_bytes_.data();
 
-
   // if file size is too small, there is only one partition
   if (partition_size_bytes == 0 || metadata_.file_size_bytes == 0 ||
       metadata_.file_size_bytes <= partition_size_bytes) {
-    partitions_.push_back(PartitionView{0, 0, metadata_.file_size_bytes, base_ptr});
+    partitions_.emplace_back(0, 0, metadata_.file_size_bytes, base_ptr);
     metadata_.num_partitions = partitions_.size();
     return;
   }
@@ -39,16 +37,16 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
 
   while (metadata_.file_size_bytes - current_partition_start >
          partition_size_bytes) {
-    const size_t next_partition_start =
-        find_next_partition_start(current_partition_start, partition_size_bytes);
+    const size_t next_partition_start = find_next_partition_start(
+        current_partition_start, partition_size_bytes);
     if (next_partition_start >= metadata_.file_size_bytes) {
       break;
     }
 
     const void *partition_ptr =
         base_ptr == nullptr ? nullptr : base_ptr + current_partition_start;
-    partitions_.push_back(PartitionView{partition_id, current_partition_start,
-                             next_partition_start - 1, partition_ptr});
+    partitions_.emplace_back(partition_id, current_partition_start,
+                             next_partition_start - 1, partition_ptr);
 
     current_partition_start = next_partition_start;
     ++partition_id;
@@ -56,18 +54,19 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
 
   const void *partition_ptr =
       base_ptr == nullptr ? nullptr : base_ptr + current_partition_start;
-  partitions_.push_back(PartitionView{partition_id, current_partition_start,
-                           metadata_.file_size_bytes, partition_ptr});
+  partitions_.emplace_back(partition_id, current_partition_start,
+                           metadata_.file_size_bytes, partition_ptr);
 
   metadata_.num_partitions = partitions_.size();
 }
 
-const std::vector<PartitionView> &FileReader::get_partition_views() const {
+std::vector<FilePartition> &FileReader::get_partitions() { return partitions_; }
+
+const std::vector<FilePartition> &FileReader::get_partitions() const {
   return partitions_;
 }
 
 const FileMetadata &FileReader::metadata() const { return metadata_; }
-
 
 void FileReader::load_file_bytes() {
   std::error_code filesystem_error;
@@ -75,8 +74,8 @@ void FileReader::load_file_bytes() {
   const auto file_size = std::filesystem::file_size(path, filesystem_error);
   if (filesystem_error) {
     throw error::file::FileOpenError("Failed to get size for file '" +
-                                     file_path_ + "': " +
-                                     filesystem_error.message());
+                                     file_path_ +
+                                     "': " + filesystem_error.message());
   }
 
   metadata_.file_size_bytes = static_cast<size_t>(file_size);
@@ -101,11 +100,12 @@ void FileReader::load_file_bytes() {
   }
 }
 
-
-// Finds the next partition start offset by searching backwards from the target offset for the nearest newline character. 
-// If no newline is found before the target offset, the function throw an error 
-size_t FileReader::find_next_partition_start(size_t current_partition_start,
-                                             size_t partition_size_bytes) const {
+// Finds the next partition start offset by searching backwards from the target
+// offset for the nearest newline character. If no newline is found before the
+// target offset, the function throw an error
+size_t
+FileReader::find_next_partition_start(size_t current_partition_start,
+                                      size_t partition_size_bytes) const {
   const size_t target_offset = current_partition_start + partition_size_bytes;
   size_t offset = target_offset;
   while (true) {

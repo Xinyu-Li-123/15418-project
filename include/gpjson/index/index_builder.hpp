@@ -24,7 +24,7 @@ class IndexBuilder {
 public:
   virtual ~IndexBuilder() = default;
 
-  virtual BuiltIndices build(const file::PartitionView &partition_view,
+  virtual BuiltIndices build(const file::FilePartition &partition,
                              size_t max_depth,
                              const IndexBuilderOptions &options) const = 0;
 };
@@ -33,8 +33,7 @@ class UncombinedIndexBuilder final : public IndexBuilder {
 public:
   explicit UncombinedIndexBuilder(const file::FileReader &file_reader);
 
-  BuiltIndices build(const file::PartitionView &partition_view,
-                     size_t max_depth,
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
                      const IndexBuilderOptions &options) const override;
 
 private:
@@ -45,8 +44,7 @@ class CombinedIndexBuilder final : public IndexBuilder {
 public:
   explicit CombinedIndexBuilder(const file::FileReader &file_reader);
 
-  BuiltIndices build(const file::PartitionView &partition_view,
-                     size_t max_depth,
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
                      const IndexBuilderOptions &options) const override;
 
 private:
