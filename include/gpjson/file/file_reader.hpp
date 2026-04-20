@@ -13,6 +13,7 @@ public:
   explicit FileReader(std::string file_path);
 
   void create_partitions(size_t partition_size_bytes);
+  std::vector<PartitionView> &get_partition_views();
   const std::vector<PartitionView> &get_partition_views() const;
   const FileMetadata &metadata() const;
 

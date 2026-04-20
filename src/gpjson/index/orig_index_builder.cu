@@ -3,11 +3,12 @@
  */
 
 #include "gpjson/cuda/cuda.hpp"
+#include "gpjson/error/common.hpp"
 #include "gpjson/file/file.hpp"
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
-#include "gpjson/log/log.hpp"
 #include "gpjson/index/kernels/orig.cuh"
+#include "gpjson/log/log.hpp"
 namespace gpjson::index::kernels::orig {
 __global__ void newline_count_index(const char *file, int fileSize,
                                     int *newlineCountIndex);
@@ -24,22 +25,23 @@ public:
   OrigIndexBuilderContext(int grid_size, int block_size,
                           int reduction_grid_size, int reduction_block_size,
                           int max_depth,
-                          const file::PartitionView &host_file_partition)
+                          const file::PartitionView &partition_view)
       : grid_size(grid_size), block_size(block_size),
         reduction_grid_size(reduction_grid_size),
         reduction_block_size(reduction_block_size), max_depth(max_depth),
-        file_size(host_file_partition.size_bytes()) {
-    device_file_partition_ =
-        cuda::DeviceArray(host_file_partition.size_bytes());
-    device_file_partition_.copy_from_host(host_file_partition.bytes(),
-                                          host_file_partition.size_bytes());
+        file_size(partition_view.size_bytes()),
+        device_file_(static_cast<const char *>(partition_view.device_bytes())) {
+    if (partition_view.size_bytes() > 0 && device_file_ == nullptr) {
+      throw error::common::ImplementationError(
+          "Index building requires a GPU-resident partition buffer");
+    }
   }
 
   OrigIndexBuilderContext(const IndexBuilderOptions &options, int max_depth,
-                          const file::PartitionView &host_file_partition)
+                          const file::PartitionView &partition_view)
       : OrigIndexBuilderContext(
             options.grid_size, options.block_size, options.reduction_grid_size,
-            options.reduction_block_size, max_depth, host_file_partition) {}
+            options.reduction_block_size, max_depth, partition_view) {}
 
   int num_cuda_threads() const { return grid_size * block_size; }
   int level_size() const {
@@ -47,7 +49,7 @@ public:
     return (this->file_size + 64 - 1) / 64;
   }
 
-  const char *device_file() const { return device_file_partition_.as<char>(); }
+  const char *device_file() const { return device_file_; }
 
   const int grid_size;
   const int block_size;
@@ -57,7 +59,7 @@ public:
   const int file_size;
 
 private:
-  cuda::DeviceArray device_file_partition_;
+  const char *device_file_{nullptr};
 };
 
 template <typename T>

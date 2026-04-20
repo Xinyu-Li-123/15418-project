@@ -49,10 +49,14 @@ public:
     view_.partition_id_ = 0;
     view_.global_start_offset_ = 0;
     view_.global_end_offset_ = data_.size();
-    view_.data_ = reinterpret_cast<const std::byte *>(data_.data());
+    view_.host_data_ = reinterpret_cast<const std::byte *>(data_.data());
   }
 
+  file::PartitionView &view() { return view_; }
+
   const file::PartitionView &view() const { return view_; }
+
+  void load_to_device() { view_.load_to_device(); }
 
   const std::string &data() const { return data_; }
 

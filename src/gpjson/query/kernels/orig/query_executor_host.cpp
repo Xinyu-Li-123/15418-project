@@ -12,16 +12,11 @@
 #include <vector>
 
 namespace gpjson::query::kernels::orig {
-__global__ void execute_query_kernel(const char *file,
-                                     int file_size,
-                                     const long *newline_index,
-                                     int newline_index_size,
-                                     const long *string_index,
-                                     const long *leveled_bitmaps_index,
-                                     int level_size,
-                                     const unsigned char *query,
-                                     int num_results,
-                                     int *result);
+__global__ void
+execute_query_kernel(const char *file, int file_size, const long *newline_index,
+                     int newline_index_size, const long *string_index,
+                     const long *leveled_bitmaps_index, int level_size,
+                     const unsigned char *query, int num_results, int *result);
 
 namespace {
 
@@ -43,9 +38,7 @@ int sanitize_block_size(int requested_block_size) {
   return requested_block_size;
 }
 
-int compute_grid_size(int num_lines,
-                      int block_size,
-                      int requested_grid_size) {
+int compute_grid_size(int num_lines, int block_size, int requested_grid_size) {
   if (requested_grid_size > 0) {
     return requested_grid_size;
   }
@@ -61,50 +54,46 @@ int compute_level_size(size_t partition_size) {
 
 class QueryExecutionContext {
 public:
-  QueryExecutionContext(const file::PartitionView &host_partition,
-                        const QueryExecutorOptions &options,
-                        int num_lines)
+  QueryExecutionContext(const file::PartitionView &partition_view,
+                        const QueryExecutorOptions &options, int num_lines)
       : block_size(sanitize_block_size(options.block_size)),
         grid_size(compute_grid_size(num_lines, block_size, options.grid_size)),
-        file_size(narrow_size_to_int(host_partition.size_bytes(),
-                                     "partition size")),
-        device_partition_(host_partition.size_bytes()) {
-    if (host_partition.size_bytes() == 0 || host_partition.bytes() == nullptr) {
-      return;
+        file_size(
+            narrow_size_to_int(partition_view.size_bytes(), "partition size")),
+        device_partition_(
+            static_cast<const char *>(partition_view.device_bytes())) {
+    if (partition_view.size_bytes() > 0 && device_partition_ == nullptr) {
+      throw execution_error(
+          "Query execution requires a GPU-resident partition buffer");
     }
-    device_partition_.copy_from_host(host_partition.bytes(),
-                                     host_partition.size_bytes());
   }
 
-  const char *device_partition() const { return device_partition_.as<char>(); }
+  const char *device_partition() const { return device_partition_; }
 
   const int block_size;
   const int grid_size;
   const int file_size;
 
 private:
-  cuda::DeviceArray device_partition_;
+  const char *device_partition_{nullptr};
 };
 
-void append_query_line_results(
-    BatchQueryResult &batch_result,
-    size_t query_index,
-    const file::PartitionView &partition_view,
-    int num_lines,
-    int num_results,
-    const std::vector<int> &host_result_buffer) {
+void append_query_line_results(BatchQueryResult &batch_result,
+                               size_t query_index,
+                               const file::PartitionView &partition_view,
+                               int num_lines, int num_results,
+                               const std::vector<int> &host_result_buffer) {
   const char *partition_bytes =
-      reinterpret_cast<const char *>(partition_view.bytes());
+      reinterpret_cast<const char *>(partition_view.host_bytes());
   const size_t partition_size = partition_view.size_bytes();
   const size_t global_partition_offset = partition_view.global_start_offset();
 
   for (int line_index = 0; line_index < num_lines; ++line_index) {
     LineQueryResult line_result;
     for (int result_index = 0; result_index < num_results; ++result_index) {
-      const size_t buffer_index =
-          static_cast<size_t>(line_index) * static_cast<size_t>(num_results) *
-              2U +
-          static_cast<size_t>(result_index) * 2U;
+      const size_t buffer_index = static_cast<size_t>(line_index) *
+                                      static_cast<size_t>(num_results) * 2U +
+                                  static_cast<size_t>(result_index) * 2U;
       const int local_start = host_result_buffer[buffer_index];
       const int local_end = host_result_buffer[buffer_index + 1U];
 
@@ -122,8 +111,8 @@ void append_query_line_results(
       QueryOffset offset;
       offset.start = global_partition_offset + start_offset;
       offset.end = global_partition_offset + end_offset;
-      offset.json_text =
-          std::string(partition_bytes + start_offset, end_offset - start_offset);
+      offset.json_text = std::string(partition_bytes + start_offset,
+                                     end_offset - start_offset);
       line_result.add_offset(std::move(offset));
     }
     batch_result.add_line_result(query_index, std::move(line_result));
@@ -133,8 +122,10 @@ void append_query_line_results(
 void validate_query_inputs(const CompiledQuery &compiled_query,
                            const index::BuiltIndices &built_indices) {
   if (compiled_query.max_depth() >
-      static_cast<size_t>(built_indices.get_leveled_bitmap_index().num_levels())) {
-    throw execution_error("Query requires more bitmap levels than the index provides");
+      static_cast<size_t>(
+          built_indices.get_leveled_bitmap_index().num_levels())) {
+    throw execution_error(
+        "Query requires more bitmap levels than the index provides");
   }
   if (compiled_query.max_depth() >= static_cast<size_t>(kMaxQueryLevels)) {
     throw execution_error("Query exceeds the maximum CUDA executor depth");
@@ -143,22 +134,25 @@ void validate_query_inputs(const CompiledQuery &compiled_query,
 
 } // namespace
 
-BatchQueryResult
-execute_batch(const BatchCompiledQuery &compiled_queries,
-              const file::PartitionView &partition_view,
-              const index::BuiltIndices &built_indices,
-              const QueryExecutorOptions &options) {
+BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
+                               const file::PartitionView &partition_view,
+                               const index::BuiltIndices &built_indices,
+                               const QueryExecutorOptions &options) {
   BatchQueryResult batch_result(compiled_queries.size());
   for (size_t query_index = 0; query_index < compiled_queries.size();
        ++query_index) {
-    batch_result.set_query_text(query_index,
-                                compiled_queries.queries()[query_index]
-                                    .query_text());
+    batch_result.set_query_text(
+        query_index, compiled_queries.queries()[query_index].query_text());
   }
 
   if (compiled_queries.size() == 0 || partition_view.size_bytes() == 0 ||
-      partition_view.bytes() == nullptr) {
+      partition_view.host_bytes() == nullptr) {
     return batch_result;
+  }
+
+  if (partition_view.device_bytes() == nullptr) {
+    throw execution_error(
+        "Query execution requires a GPU-resident partition buffer");
   }
 
   if (!cuda::device_available()) {
@@ -173,8 +167,8 @@ execute_batch(const BatchCompiledQuery &compiled_queries,
   if (built_indices.get_newline_index().data() == nullptr ||
       built_indices.get_string_index().data() == nullptr ||
       built_indices.get_leveled_bitmap_index().data() == nullptr) {
-    throw execution_error(
-        "Query execution requires GPU-resident newline, string, and bitmap indices");
+    throw execution_error("Query execution requires GPU-resident newline, "
+                          "string, and bitmap indices");
   }
 
   const int level_size = compute_level_size(partition_view.size_bytes());
@@ -182,7 +176,8 @@ execute_batch(const BatchCompiledQuery &compiled_queries,
 
   for (size_t query_index = 0; query_index < compiled_queries.size();
        ++query_index) {
-    const CompiledQuery &compiled_query = compiled_queries.queries()[query_index];
+    const CompiledQuery &compiled_query =
+        compiled_queries.queries()[query_index];
     validate_query_inputs(compiled_query, built_indices);
 
     const int num_results =
@@ -197,9 +192,9 @@ execute_batch(const BatchCompiledQuery &compiled_queries,
     cuda::DeviceArray device_result(host_result_count * sizeof(int));
     device_result.memset(0xFF);
 
-    LogInfo("Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
-            ctx.grid_size, ctx.block_size, num_lines, num_results,
-            ctx.file_size);
+    LogInfo(
+        "Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
+        ctx.grid_size, ctx.block_size, num_lines, num_results, ctx.file_size);
     execute_query_kernel<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_partition(), ctx.file_size,
         static_cast<const long *>(built_indices.get_newline_index().data()),

@@ -46,11 +46,10 @@ gpjson_configure_test_target(gpjson-cuda_tests)
 
 add_executable(gpjson-file_reader_tests
   file/file_reader_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/gpjson/file/file.cpp
-  ${PROJECT_SOURCE_DIR}/src/gpjson/file/file_reader.cpp
 )
 target_link_libraries(gpjson-file_reader_tests
   PRIVATE
+    gpjson-cpp_lib
     GTest::gtest_main
 )
 gpjson_configure_test_target(gpjson-file_reader_tests)
