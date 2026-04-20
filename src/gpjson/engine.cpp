@@ -22,9 +22,8 @@ create_index_builder(const file::FileReader &file_reader,
   case index::IndexBuilderType::COMBINED:
     return std::make_unique<index::CombinedIndexBuilder>(file_reader);
 
-  case index::IndexBuilderType::NO_ESCAPE_QUOTE:
-    throw error::common::NotImplementedError(
-        "NO_ESCAPE_QUOTE type of index builder is not implemented!");
+  case index::IndexBuilderType::FUSED:
+    return std::make_unique<index::FusedIndexBuilder>(file_reader);
 
   default:
     throw error::common::ImplementationError("Undefined index builder type.");

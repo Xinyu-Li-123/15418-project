@@ -132,8 +132,8 @@ TEST(DriverConfigTest, ParsesEnumAliases) {
                 "COMBINED"),
             gpjson::index::IndexBuilderType::COMBINED);
   EXPECT_EQ(gpjson::driver::parse_enum_value<gpjson::index::IndexBuilderType>(
-                "NO_ESCAPE_QUOTE"),
-            gpjson::index::IndexBuilderType::NO_ESCAPE_QUOTE);
+                "FUSED"),
+            gpjson::index::IndexBuilderType::FUSED);
 }
 
 TEST(DriverConfigTest, RejectsInvalidEnum) {
