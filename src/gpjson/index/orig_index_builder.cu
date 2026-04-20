@@ -24,24 +24,23 @@ class OrigIndexBuilderContext {
 public:
   OrigIndexBuilderContext(int grid_size, int block_size,
                           int reduction_grid_size, int reduction_block_size,
-                          int max_depth,
-                          const file::PartitionView &partition_view)
+                          int max_depth, const file::FilePartition &partition)
       : grid_size(grid_size), block_size(block_size),
         reduction_grid_size(reduction_grid_size),
         reduction_block_size(reduction_block_size), max_depth(max_depth),
-        file_size(partition_view.size_bytes()),
-        device_file_(static_cast<const char *>(partition_view.device_bytes())) {
-    if (partition_view.size_bytes() > 0 && device_file_ == nullptr) {
+        file_size(partition.size_bytes()),
+        device_file_(static_cast<const char *>(partition.device_bytes())) {
+    if (partition.size_bytes() > 0 && device_file_ == nullptr) {
       throw error::common::ImplementationError(
           "Index building requires a GPU-resident partition buffer");
     }
   }
 
   OrigIndexBuilderContext(const IndexBuilderOptions &options, int max_depth,
-                          const file::PartitionView &partition_view)
+                          const file::FilePartition &partition)
       : OrigIndexBuilderContext(
             options.grid_size, options.block_size, options.reduction_grid_size,
-            options.reduction_block_size, max_depth, partition_view) {}
+            options.reduction_block_size, max_depth, partition) {}
 
   int num_cuda_threads() const { return grid_size * block_size; }
   int level_size() const {
@@ -232,11 +231,11 @@ UncombinedIndexBuilder::UncombinedIndexBuilder(
 }
 
 BuiltIndices
-UncombinedIndexBuilder::build(const file::PartitionView &partition_view,
+UncombinedIndexBuilder::build(const file::FilePartition &partition,
                               size_t max_depth,
                               const IndexBuilderOptions &options) const {
   LogInfo("Build uncombined index builder.");
-  const OrigIndexBuilderContext ctx(options, max_depth, partition_view);
+  const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(false, ctx);
@@ -251,11 +250,11 @@ CombinedIndexBuilder::CombinedIndexBuilder(const file::FileReader &file_reader)
 }
 
 BuiltIndices
-CombinedIndexBuilder::build(const file::PartitionView &partition_view,
+CombinedIndexBuilder::build(const file::FilePartition &partition,
                             size_t max_depth,
                             const IndexBuilderOptions &options) const {
   LogInfo("Build uncombined index builder.");
-  const OrigIndexBuilderContext ctx(options, max_depth, partition_view);
+  const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(true, ctx);

@@ -54,15 +54,13 @@ int compute_level_size(size_t partition_size) {
 
 class QueryExecutionContext {
 public:
-  QueryExecutionContext(const file::PartitionView &partition_view,
+  QueryExecutionContext(const file::FilePartition &partition,
                         const QueryExecutorOptions &options, int num_lines)
       : block_size(sanitize_block_size(options.block_size)),
         grid_size(compute_grid_size(num_lines, block_size, options.grid_size)),
-        file_size(
-            narrow_size_to_int(partition_view.size_bytes(), "partition size")),
-        device_partition_(
-            static_cast<const char *>(partition_view.device_bytes())) {
-    if (partition_view.size_bytes() > 0 && device_partition_ == nullptr) {
+        file_size(narrow_size_to_int(partition.size_bytes(), "partition size")),
+        device_partition_(static_cast<const char *>(partition.device_bytes())) {
+    if (partition.size_bytes() > 0 && device_partition_ == nullptr) {
       throw execution_error(
           "Query execution requires a GPU-resident partition buffer");
     }
@@ -80,13 +78,13 @@ private:
 
 void append_query_line_results(BatchQueryResult &batch_result,
                                size_t query_index,
-                               const file::PartitionView &partition_view,
+                               const file::FilePartition &partition,
                                int num_lines, int num_results,
                                const std::vector<int> &host_result_buffer) {
   const char *partition_bytes =
-      reinterpret_cast<const char *>(partition_view.host_bytes());
-  const size_t partition_size = partition_view.size_bytes();
-  const size_t global_partition_offset = partition_view.global_start_offset();
+      reinterpret_cast<const char *>(partition.host_bytes());
+  const size_t partition_size = partition.size_bytes();
+  const size_t global_partition_offset = partition.global_start_offset();
 
   for (int line_index = 0; line_index < num_lines; ++line_index) {
     LineQueryResult line_result;
@@ -135,7 +133,7 @@ void validate_query_inputs(const CompiledQuery &compiled_query,
 } // namespace
 
 BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
-                               const file::PartitionView &partition_view,
+                               const file::FilePartition &partition,
                                const index::BuiltIndices &built_indices,
                                const QueryExecutorOptions &options) {
   BatchQueryResult batch_result(compiled_queries.size());
@@ -145,12 +143,12 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
         query_index, compiled_queries.queries()[query_index].query_text());
   }
 
-  if (compiled_queries.size() == 0 || partition_view.size_bytes() == 0 ||
-      partition_view.host_bytes() == nullptr) {
+  if (compiled_queries.size() == 0 || partition.size_bytes() == 0 ||
+      partition.host_bytes() == nullptr) {
     return batch_result;
   }
 
-  if (partition_view.device_bytes() == nullptr) {
+  if (partition.device_bytes() == nullptr) {
     throw execution_error(
         "Query execution requires a GPU-resident partition buffer");
   }
@@ -171,8 +169,8 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
                           "string, and bitmap indices");
   }
 
-  const int level_size = compute_level_size(partition_view.size_bytes());
-  const QueryExecutionContext ctx(partition_view, options, num_lines);
+  const int level_size = compute_level_size(partition.size_bytes());
+  const QueryExecutionContext ctx(partition, options, num_lines);
 
   for (size_t query_index = 0; query_index < compiled_queries.size();
        ++query_index) {
@@ -210,8 +208,8 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
     std::vector<int> host_result_buffer(host_result_count, -1);
     device_result.copy_to_host(host_result_buffer.data(),
                                host_result_buffer.size() * sizeof(int));
-    append_query_line_results(batch_result, query_index, partition_view,
-                              num_lines, num_results, host_result_buffer);
+    append_query_line_results(batch_result, query_index, partition, num_lines,
+                              num_results, host_result_buffer);
   }
 
   return batch_result;

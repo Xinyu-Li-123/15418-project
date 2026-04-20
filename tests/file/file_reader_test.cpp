@@ -9,8 +9,8 @@
 
 namespace {
 
+using gpjson::file::FilePartition;
 using gpjson::file::FileReader;
-using gpjson::file::PartitionView;
 
 std::string bytes_to_string(const void *bytes, size_t size) {
   if (bytes == nullptr || size == 0) {
@@ -29,7 +29,7 @@ std::filesystem::path write_temp_file(const std::string &filename,
   return path;
 }
 
-void expect_partition(const PartitionView &partition, size_t expected_id,
+void expect_partition(const FilePartition &partition, size_t expected_id,
                       size_t expected_start, size_t expected_end,
                       const std::string &expected_contents) {
   EXPECT_EQ(partition.partition_id(), expected_id);
@@ -74,7 +74,7 @@ TEST_F(FileReaderTest, CreatesSinglePartitionForWholeFile) {
   ASSERT_EQ(metadata.file_size_bytes, contents.size());
   ASSERT_EQ(metadata.num_partitions, 1U);
 
-  const auto &partitions = reader.get_partition_views();
+  const auto &partitions = reader.get_partitions();
   ASSERT_EQ(partitions.size(), 1U);
   expect_partition(partitions.front(), 0, 0, contents.size(), contents);
 }
@@ -90,7 +90,7 @@ TEST_F(FileReaderTest, SplitsPartitionsAtNewlineBoundaries) {
   ASSERT_EQ(metadata.file_size_bytes, contents.size());
   ASSERT_EQ(metadata.num_partitions, 3U);
 
-  const auto &partitions = reader.get_partition_views();
+  const auto &partitions = reader.get_partitions();
   ASSERT_EQ(partitions.size(), 3U);
   expect_partition(partitions[0], 0, 0, 5, "alpha");
   expect_partition(partitions[1], 1, 6, 10, "beta");

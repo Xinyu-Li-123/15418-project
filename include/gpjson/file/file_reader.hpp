@@ -13,8 +13,8 @@ public:
   explicit FileReader(std::string file_path);
 
   void create_partitions(size_t partition_size_bytes);
-  std::vector<PartitionView> &get_partition_views();
-  const std::vector<PartitionView> &get_partition_views() const;
+  std::vector<FilePartition> &get_partitions();
+  const std::vector<FilePartition> &get_partitions() const;
   const FileMetadata &metadata() const;
 
 private:
@@ -25,7 +25,7 @@ private:
   std::string file_path_;
   FileMetadata metadata_;
   std::vector<std::byte> mapped_bytes_;
-  std::vector<PartitionView> partitions_;
+  std::vector<FilePartition> partitions_;
 };
 
 } // namespace gpjson::file

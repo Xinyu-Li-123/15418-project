@@ -60,11 +60,9 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
   metadata_.num_partitions = partitions_.size();
 }
 
-std::vector<PartitionView> &FileReader::get_partition_views() {
-  return partitions_;
-}
+std::vector<FilePartition> &FileReader::get_partitions() { return partitions_; }
 
-const std::vector<PartitionView> &FileReader::get_partition_views() const {
+const std::vector<FilePartition> &FileReader::get_partitions() const {
   return partitions_;
 }
 

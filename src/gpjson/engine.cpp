@@ -97,14 +97,13 @@ Engine::query(const std::string &file_path,
   std::vector<query::MaterializedQueryResult> merged_queries =
       initialize_materialized_query_results(compiled_queries);
 
-  for (auto &partition_view : file_reader.get_partition_views()) {
-    partition_view.load_to_device();
+  for (auto &partition : file_reader.get_partitions()) {
+    partition.load_to_device();
     index::BuiltIndices built_indices =
-        index_builder->build(partition_view, compiled_queries.get_max_depth(),
+        index_builder->build(partition, compiled_queries.get_max_depth(),
                              options.index_builder_options);
     const query::MaterializedBatchResult partition_result =
-        query_executor
-            .execute_batch(compiled_queries, partition_view, built_indices)
+        query_executor.execute_batch(compiled_queries, partition, built_indices)
             .materialize();
     append_partition_results(merged_queries, partition_result);
   }

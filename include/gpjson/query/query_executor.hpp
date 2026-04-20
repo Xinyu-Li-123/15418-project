@@ -16,7 +16,7 @@ public:
 
   BatchQueryResult
   execute_batch(const BatchCompiledQuery &compiled_queries,
-                const file::PartitionView &partition_view,
+                const file::FilePartition &partition,
                 const index::BuiltIndices &built_indices) const;
 
 private:
