@@ -3,8 +3,10 @@ namespace gpjson::index::kernels::fuse {
 /* Set bit at offset to be bit_value in bitmap */
 __device__ static void set_bit_at_offset(long &bitmap, int offset,
                                          bool bit_value) {
-  // ...
-  bitmap |= bit_value << offset;
+  if (!bit_value) {
+    return;
+  }
+  bitmap |= 1L << offset;
 }
 
 /**
@@ -50,6 +52,7 @@ __global__ void string_index_using_escape_carry_index_quote_carry_index(
     int chunkId = i / 64;
     for (int chunkOffset = 0; chunkOffset < 64; chunkOffset++) {
       if (!(i < end && i < fileSize)) {
+        stringIndex[chunkId] = curChunkStringBitmap;
         return;
       }
       char curChar = file[i];

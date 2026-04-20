@@ -21,6 +21,9 @@
 
 namespace {
 
+class LeveledBitmapIndexBuilderTest
+    : public ::testing::TestWithParam<gpjson::index::IndexBuilderType> {};
+
 bool is_escaped_quote(const std::string &data, size_t quote_offset) {
   size_t slash_count = 0;
   for (size_t i = quote_offset; i > 0 && data[i - 1] == '\\'; --i) {
@@ -87,18 +90,20 @@ std::vector<long> expected_leveled_bitmap_index(const std::string &data,
   return expected;
 }
 
-TEST(IndexBuilderTest, BuildsLeveledBitmapIndex) {
+TEST_P(LeveledBitmapIndexBuilderTest, BuildsLeveledBitmapIndex) {
   GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
   gpjson::test::index::StaticPartition partition(
       gpjson::test::index::ld_json_fixture());
   partition.load_to_device();
   gpjson::file::FileReader file_reader{"in-memory.ldjson"};
-  gpjson::index::UncombinedIndexBuilder builder{file_reader};
+  const gpjson::index::IndexBuilderType builder_type = GetParam();
+  auto builder =
+      gpjson::test::index::make_index_builder(builder_type, file_reader);
 
   gpjson::index::BuiltIndices indices =
-      builder.build(partition.view(), gpjson::test::index::kMaxDepth,
-                    gpjson::test::index::small_builder_options());
+      builder->build(partition.view(), gpjson::test::index::kMaxDepth,
+                     gpjson::test::index::small_builder_options(builder_type));
   gpjson::cuda::synchronize();
 
   const std::vector<long> expected = expected_leveled_bitmap_index(
@@ -121,5 +126,10 @@ TEST(ExpectedIndexTest, ComputesExpectedLeveledBitmapIndex) {
 
   EXPECT_EQ(expected_leveled_bitmap_index(data, 3), oracle);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    AllIndexBuilders, LeveledBitmapIndexBuilderTest,
+    ::testing::ValuesIn(gpjson::test::index::kIndexBuilderTypes),
+    gpjson::test::index::index_builder_type_test_name);
 
 } // namespace

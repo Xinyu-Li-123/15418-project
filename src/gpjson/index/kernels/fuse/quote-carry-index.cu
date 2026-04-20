@@ -26,7 +26,6 @@ quote_carry_index_using_escape_carry_index(const char *file, int fileSize,
   int start = index * bitmapAlignedCharsPerThread;
   int end = start + bitmapAlignedCharsPerThread;
 
-  long escaped = 0;
   int quoteCount = 0;
 
   // escapeCarryIndex[index-1] tells if first char in the chunk assigned to
