@@ -31,10 +31,10 @@ create_index_builder(const file::FileReader &file_reader,
   }
 }
 
-query::BatchCompiledQuery compile_queries(
-    const std::vector<std::string> &queries_src,
-    const EngineOptions &options,
-    const query::QueryCompiler &query_compiler) {
+query::BatchCompiledQuery
+compile_queries(const std::vector<std::string> &queries_src,
+                const EngineOptions &options,
+                const query::QueryCompiler &query_compiler) {
   query::BatchCompiledQuery compiled_queries;
   for (const auto &query_src : queries_src) {
     compiled_queries.add(query_compiler.compile(query_src, options));
@@ -65,7 +65,8 @@ void append_partition_results(
 
   for (size_t query_index = 0; query_index < merged_queries.size();
        ++query_index) {
-    const auto &partition_lines = partition_result.queries()[query_index].lines();
+    const auto &partition_lines =
+        partition_result.queries()[query_index].lines();
     for (const auto &partition_line : partition_lines) {
       merged_queries[query_index].add_line_result(partition_line);
     }
@@ -96,13 +97,13 @@ Engine::query(const std::string &file_path,
   std::vector<query::MaterializedQueryResult> merged_queries =
       initialize_materialized_query_results(compiled_queries);
 
-  for (const auto &partition_view : file_reader.get_partition_views()) {
+  for (auto &partition : file_reader.get_partitions()) {
+    partition.load_to_device();
+    index::BuiltIndices built_indices =
+        index_builder->build(partition, compiled_queries.get_max_depth(),
+                             options.index_builder_options);
     const query::MaterializedBatchResult partition_result =
-        query_executor
-            .execute_batch(compiled_queries, partition_view,
-                           index_builder->build(
-                               partition_view, compiled_queries.get_max_depth(),
-                               options.index_builder_options))
+        query_executor.execute_batch(compiled_queries, partition, built_indices)
             .materialize();
     append_partition_results(merged_queries, partition_result);
   }

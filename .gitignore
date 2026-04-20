@@ -6,3 +6,7 @@ Testing/
 
 compile_commands.json
 .codex
+
+*.nsys-rep
+*.sqlite
+*.ncu-rep

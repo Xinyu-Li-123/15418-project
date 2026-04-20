@@ -9,8 +9,8 @@
 
 namespace {
 
+using gpjson::file::FilePartition;
 using gpjson::file::FileReader;
-using gpjson::file::PartitionView;
 
 std::string bytes_to_string(const void *bytes, size_t size) {
   if (bytes == nullptr || size == 0) {
@@ -29,16 +29,14 @@ std::filesystem::path write_temp_file(const std::string &filename,
   return path;
 }
 
-void expect_partition(const PartitionView &partition,
-                      size_t expected_id,
-                      size_t expected_start,
-                      size_t expected_end,
+void expect_partition(const FilePartition &partition, size_t expected_id,
+                      size_t expected_start, size_t expected_end,
                       const std::string &expected_contents) {
   EXPECT_EQ(partition.partition_id(), expected_id);
   EXPECT_EQ(partition.global_start_offset(), expected_start);
   EXPECT_EQ(partition.global_end_offset(), expected_end);
   EXPECT_EQ(partition.size_bytes(), expected_contents.size());
-  EXPECT_EQ(bytes_to_string(partition.bytes(), partition.size_bytes()),
+  EXPECT_EQ(bytes_to_string(partition.host_bytes(), partition.size_bytes()),
             expected_contents);
 }
 
@@ -65,8 +63,8 @@ private:
 
 TEST_F(FileReaderTest, CreatesSinglePartitionForWholeFile) {
   const std::string contents = "{\"id\":1}\n{\"id\":2}\n";
-  const auto path = create_file("gpjson_file_reader_single_partition.json",
-                                contents);
+  const auto path =
+      create_file("gpjson_file_reader_single_partition.json", contents);
 
   FileReader reader(path.string());
   reader.create_partitions(0);
@@ -76,7 +74,7 @@ TEST_F(FileReaderTest, CreatesSinglePartitionForWholeFile) {
   ASSERT_EQ(metadata.file_size_bytes, contents.size());
   ASSERT_EQ(metadata.num_partitions, 1U);
 
-  const auto &partitions = reader.get_partition_views();
+  const auto &partitions = reader.get_partitions();
   ASSERT_EQ(partitions.size(), 1U);
   expect_partition(partitions.front(), 0, 0, contents.size(), contents);
 }
@@ -92,7 +90,7 @@ TEST_F(FileReaderTest, SplitsPartitionsAtNewlineBoundaries) {
   ASSERT_EQ(metadata.file_size_bytes, contents.size());
   ASSERT_EQ(metadata.num_partitions, 3U);
 
-  const auto &partitions = reader.get_partition_views();
+  const auto &partitions = reader.get_partitions();
   ASSERT_EQ(partitions.size(), 3U);
   expect_partition(partitions[0], 0, 0, 5, "alpha");
   expect_partition(partitions[1], 1, 6, 10, "beta");
@@ -103,7 +101,8 @@ TEST_F(FileReaderTest, ThrowsWhenNoNewlineExistsBeforeBoundary) {
   create_file("gpjson_file_reader_partition_error.txt", "abcdefghij");
 
   FileReader reader(temp_path().string());
-  EXPECT_THROW(reader.create_partitions(4), gpjson::error::file::PartitionError);
+  EXPECT_THROW(reader.create_partitions(4),
+               gpjson::error::file::PartitionError);
 }
 
 } // namespace

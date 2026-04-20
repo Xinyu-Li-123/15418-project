@@ -11,10 +11,10 @@ QueryExecutor::QueryExecutor(const gpjson::EngineOptions &options)
 
 BatchQueryResult
 QueryExecutor::execute_batch(const BatchCompiledQuery &compiled_queries,
-                             const file::PartitionView &partition_view,
+                             const file::FilePartition &partition,
                              const index::BuiltIndices &built_indices) const {
   return kernels::orig::execute_batch(
-      compiled_queries, partition_view, built_indices,
+      compiled_queries, partition, built_indices,
       kernels::orig::QueryExecutorOptions{grid_size_, block_size_});
 }
 

@@ -92,6 +92,7 @@ TEST(IndexBuilderTest, BuildsLeveledBitmapIndex) {
 
   gpjson::test::index::StaticPartition partition(
       gpjson::test::index::ld_json_fixture());
+  partition.load_to_device();
   gpjson::file::FileReader file_reader{"in-memory.ldjson"};
   gpjson::index::UncombinedIndexBuilder builder{file_reader};
 

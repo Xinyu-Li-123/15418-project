@@ -16,7 +16,7 @@
 namespace {
 
 using gpjson::cuda::DeviceArray;
-using gpjson::file::PartitionView;
+using gpjson::file::FilePartition;
 using gpjson::index::BuiltIndices;
 using gpjson::index::LeveledBitmapIndex;
 using gpjson::index::NewlineIndex;
@@ -161,7 +161,8 @@ TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
   const std::string json_text =
       R"({"store":{"book":[{"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":"8.95"},{"category":"fiction","author":"Herman Melville","title":"Moby Dick","isbn":"0-553-21311-3","price":"8.99"},{"category":"fiction","author":"J.R.R. Tolkien","title":"The Lord of the Rings","isbn":"0-395-19395-8","price":"22.99"}],"bicycle":{"color":"red","price":"19.95"}},"expensive":"10"})";
 
-  const PartitionView partition_view(0, 0, json_text.size(), json_text.data());
+  FilePartition partition(0, 0, json_text.size(), json_text.data());
+  partition.load_to_device();
   BuiltIndices built_indices = build_single_line_indices(json_text);
 
   gpjson::EngineOptions options{};
@@ -169,7 +170,7 @@ TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
   QueryExecutor executor(options);
 
   const auto batch_result =
-      executor.execute_batch(compiled_queries, partition_view, built_indices);
+      executor.execute_batch(compiled_queries, partition, built_indices);
   const MaterializedBatchResult materialized = batch_result.materialize();
   print_materialized_result(materialized);
 
@@ -191,6 +192,24 @@ TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
             "\"Herman Melville\"");
 }
 
+TEST(FilePartitionTest, LoadToDeviceIsIdempotent) {
+  if (!gpjson::cuda::device_available()) {
+    GTEST_SKIP() << "CUDA device unavailable";
+  }
+
+  const std::string json_text = R"({"id":1})";
+  FilePartition partition(0, 0, json_text.size(), json_text.data());
+
+  EXPECT_FALSE(partition.device_loaded());
+  partition.load_to_device();
+  const void *device_bytes = partition.device_bytes();
+  ASSERT_NE(device_bytes, nullptr);
+  EXPECT_TRUE(partition.device_loaded());
+
+  partition.load_to_device();
+  EXPECT_EQ(partition.device_bytes(), device_bytes);
+}
+
 TEST(QueryExecutorTest, MaterializedResultsSkipUnmatchedLines) {
   if (!gpjson::cuda::device_available()) {
     GTEST_SKIP() << "CUDA device unavailable";
@@ -199,7 +218,8 @@ TEST(QueryExecutorTest, MaterializedResultsSkipUnmatchedLines) {
   const std::string json_text =
       R"({"store":{"book":[{"category":"reference","author":"Nigel Rees","title":"Sayings of the Century","price":"8.95"},{"category":"fiction","author":"Herman Melville","title":"Moby Dick","isbn":"0-553-21311-3","price":"8.99"},{"category":"fiction","author":"J.R.R. Tolkien","title":"The Lord of the Rings","isbn":"0-395-19395-8","price":"22.99"}],"bicycle":{"color":"red","price":"19.95"}},"expensive":"10"})";
 
-  const PartitionView partition_view(0, 0, json_text.size(), json_text.data());
+  FilePartition partition(0, 0, json_text.size(), json_text.data());
+  partition.load_to_device();
   BuiltIndices built_indices = build_single_line_indices(json_text);
 
   gpjson::EngineOptions options{};
@@ -209,7 +229,7 @@ TEST(QueryExecutorTest, MaterializedResultsSkipUnmatchedLines) {
 
   QueryExecutor executor(options);
   const auto batch_result =
-      executor.execute_batch(compiled_queries, partition_view, built_indices);
+      executor.execute_batch(compiled_queries, partition, built_indices);
   const MaterializedBatchResult materialized = batch_result.materialize();
 
   ASSERT_EQ(batch_result.queries().size(), 1U);

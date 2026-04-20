@@ -14,17 +14,17 @@ struct IndexBuilderOptions {
   index::IndexBuilderType index_builder_type{
       index::IndexBuilderType::UNCOMBINED};
   size_t file_partition_size{0};
-  const int grid_size;
-  const int block_size;
-  const int reduction_grid_size;
-  const int reduction_block_size;
+  int grid_size{0};
+  int block_size{0};
+  int reduction_grid_size{0};
+  int reduction_block_size{0};
 };
 
 class IndexBuilder {
 public:
   virtual ~IndexBuilder() = default;
 
-  virtual BuiltIndices build(const file::PartitionView &partition_view,
+  virtual BuiltIndices build(const file::FilePartition &partition,
                              size_t max_depth,
                              const IndexBuilderOptions &options) const = 0;
 };
@@ -33,8 +33,7 @@ class UncombinedIndexBuilder final : public IndexBuilder {
 public:
   explicit UncombinedIndexBuilder(const file::FileReader &file_reader);
 
-  BuiltIndices build(const file::PartitionView &partition_view,
-                     size_t max_depth,
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
                      const IndexBuilderOptions &options) const override;
 
 private:
@@ -45,8 +44,7 @@ class CombinedIndexBuilder final : public IndexBuilder {
 public:
   explicit CombinedIndexBuilder(const file::FileReader &file_reader);
 
-  BuiltIndices build(const file::PartitionView &partition_view,
-                     size_t max_depth,
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
                      const IndexBuilderOptions &options) const override;
 
 private:
