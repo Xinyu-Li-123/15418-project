@@ -9,6 +9,9 @@
 #include "gpjson/index/index_builder.hpp"
 #include "gpjson/index/kernels/orig.cuh"
 #include "gpjson/log/log.hpp"
+
+#include <algorithm>
+
 namespace gpjson::index::kernels::orig {
 __global__ void newline_count_index(const char *file, int fileSize,
                                     int *newlineCountIndex);
@@ -60,6 +63,11 @@ public:
 private:
   const char *device_file_{nullptr};
 };
+
+int reduction_scan_stride(const OrigIndexBuilderContext &ctx) {
+  return std::min(ctx.num_cuda_threads(),
+                  ctx.reduction_grid_size * ctx.reduction_block_size);
+}
 
 template <typename T>
 void copy_scalar_to_device(cuda::DeviceArray &array, size_t index,
@@ -114,14 +122,13 @@ create_newline_and_string_index(bool combined,
 
   cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
                                      ctx.reduction_block_size * sizeof(int));
-  const int num_reduction_cuda_threads =
-      ctx.reduction_grid_size * ctx.reduction_block_size;
+  const int scan_stride = reduction_scan_stride(ctx);
   kernels::orig::
       int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads());
   kernels::orig::int_sum_post_scan<<<1, 1>>>(
-      newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
-      num_reduction_cuda_threads, 1, int_sum_base_mem.as<int>());
+      newline_count_index_mem.as<int>(), ctx.num_cuda_threads(), scan_stride, 1,
+      int_sum_base_mem.as<int>());
   kernels::orig::
       int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
@@ -132,6 +139,9 @@ create_newline_and_string_index(bool combined,
   const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
                                                      ctx.num_cuda_threads());
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
+  // Slot 0 is the synthetic start offset for the first line; kernels append
+  // discovered newline offsets starting at slot 1.
+  copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
   cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
 
   if (combined) {
@@ -159,9 +169,9 @@ create_newline_and_string_index(bool combined,
   kernels::orig::
       xor_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads());
-  kernels::orig::xor_post_scan<<<1, 1>>>(
-      string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
-      num_reduction_cuda_threads, xor_base_mem.as<char>());
+  kernels::orig::xor_post_scan<<<1, 1>>>(string_carry_index_mem.as<char>(),
+                                         ctx.num_cuda_threads(), scan_stride,
+                                         xor_base_mem.as<char>());
   kernels::orig::
       xor_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
@@ -193,15 +203,13 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
 
   cuda::DeviceArray char_sum_base_mem(ctx.reduction_grid_size *
                                       ctx.reduction_block_size * sizeof(char));
-  const int num_reduction_cuda_threads =
-      ctx.reduction_grid_size * ctx.reduction_block_size;
+  const int scan_stride = reduction_scan_stride(ctx);
   kernels::orig::
       char_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           carry_index_mem.as<char>(), ctx.num_cuda_threads());
   kernels::orig::char_sum_post_scan<<<1, 1>>>(
-      carry_index_mem.as<char>(), ctx.num_cuda_threads(),
-      num_reduction_cuda_threads, static_cast<char>(-1),
-      char_sum_base_mem.as<char>());
+      carry_index_mem.as<char>(), ctx.num_cuda_threads(), scan_stride,
+      static_cast<char>(-1), char_sum_base_mem.as<char>());
   kernels::orig::
       char_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           carry_index_mem.as<char>(), ctx.num_cuda_threads(),
