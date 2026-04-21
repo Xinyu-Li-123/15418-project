@@ -277,11 +277,6 @@ void validate_driver_inputs(const DriverInputs &inputs) {
   }
 
   const auto &options = inputs.engine_options.index_builder_options;
-  if (options.index_builder_type ==
-      gpjson::index::IndexBuilderType::NO_ESCAPE_QUOTE) {
-    throw std::runtime_error(
-        "index_builder.type=no_escape_quote is not implemented.");
-  }
 
   if (options.grid_size < 0 || options.block_size < 0 ||
       options.reduction_grid_size < 0 || options.reduction_block_size < 0) {
