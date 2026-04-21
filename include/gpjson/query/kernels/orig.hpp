@@ -9,8 +9,8 @@ namespace gpjson::query::kernels::orig {
 inline constexpr int kMaxQueryLevels = 16;
 
 struct QueryExecutorOptions {
-  int grid_size{0};
-  int block_size{256};
+  int grid_size{512};
+  int block_size{1024};
 };
 
 BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,

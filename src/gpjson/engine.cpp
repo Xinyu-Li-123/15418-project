@@ -7,11 +7,27 @@
 #include "gpjson/query/query_compiler.hpp"
 #include "gpjson/query/query_executor.hpp"
 
+#include <iostream>
 #include <memory>
 #include <vector>
 
 namespace gpjson {
 namespace {
+
+std::unique_ptr<file::FileReader>
+create_file_reader(const std::string &file_path,
+                   const file::FileReaderOptions &options) {
+  switch (options.file_reader_type) {
+  case file::FileReaderType::COPIED:
+    return std::make_unique<file::CopiedFileReader>(file_path);
+
+  case file::FileReaderType::MMAP:
+    return std::make_unique<file::MmapFileReader>(file_path);
+
+  default:
+    throw error::common::ImplementationError("Undefined file reader type.");
+  }
+}
 
 std::unique_ptr<index::IndexBuilder>
 create_index_builder(const file::FileReader &file_reader,
@@ -79,6 +95,7 @@ query::MaterializedBatchResult
 Engine::query(const std::string &file_path,
               const std::vector<std::string> &queries_src,
               const EngineOptions &options) const {
+  std::cout << "Engine::query options: " << options << '\n';
   if (queries_src.empty()) {
     return {};
   }
@@ -94,20 +111,21 @@ Engine::query(const std::string &file_path,
       compile_queries(queries_src, options, query_compiler);
   profiler.end(query_comp_timer);
 
-  file::FileReader file_reader(file_path);
+  std::unique_ptr<file::FileReader> file_reader =
+      create_file_reader(file_path, options.file_reader_options);
   const profiler::Profiler::SegmentId create_partitions_timer =
       profiler.begin("file_reader.create_partitions");
-  file_reader.create_partitions(
+  file_reader->create_partitions(
       options.index_builder_options.file_partition_size);
   profiler.end(create_partitions_timer);
 
   std::unique_ptr<index::IndexBuilder> index_builder =
-      create_index_builder(file_reader, options.index_builder_options);
+      create_index_builder(*file_reader, options.index_builder_options);
 
   std::vector<query::MaterializedQueryResult> merged_queries =
       initialize_materialized_query_results(compiled_queries);
 
-  for (auto &partition : file_reader.get_partitions()) {
+  for (auto &partition : file_reader->get_partitions()) {
     const profiler::Profiler::SegmentId partition_total_timer =
         profiler.beginf("partition %zu total", partition.partition_id());
     const profiler::Profiler::SegmentId load_to_device_timer = profiler.beginf(
