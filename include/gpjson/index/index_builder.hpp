@@ -8,7 +8,7 @@
 
 namespace gpjson::index {
 
-enum class IndexBuilderType { UNCOMBINED = 0, COMBINED, NO_ESCAPE_QUOTE };
+enum class IndexBuilderType { UNCOMBINED = 0, COMBINED, FUSED };
 
 struct IndexBuilderOptions {
   index::IndexBuilderType index_builder_type{
@@ -50,4 +50,16 @@ public:
 private:
   const file::FileReader &file_reader_;
 };
+
+class FusedIndexBuilder final : public IndexBuilder {
+public:
+  explicit FusedIndexBuilder(const file::FileReader &file_reader);
+
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
+                     const IndexBuilderOptions &options) const override;
+
+private:
+  const file::FileReader &file_reader_;
+};
+
 } // namespace gpjson::index
