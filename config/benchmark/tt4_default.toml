@@ -1,6 +1,9 @@
 dataset_path = "dataset/twitter_small_records_remove.json"
 queries = ["$.user.lang[?(@ == \"en\")]"]
 
+[file_reader]
+type = "COPIED"
+
 [index_builder]
 type = "COMBINED"
 grid_size = 16384

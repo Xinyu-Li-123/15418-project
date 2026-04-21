@@ -10,12 +10,12 @@
 
 namespace gpjson::file {
 
-FileReader::FileReader(std::string file_path)
+CopiedFileReader::CopiedFileReader(std::string file_path)
     : file_path_(std::move(file_path)) {
   metadata_.file_path = file_path_;
 }
 
-void FileReader::create_partitions(size_t partition_size_bytes) {
+void CopiedFileReader::create_partitions(size_t partition_size_bytes) {
 
   load_file_bytes();
 
@@ -60,15 +60,17 @@ void FileReader::create_partitions(size_t partition_size_bytes) {
   metadata_.num_partitions = partitions_.size();
 }
 
-std::vector<FilePartition> &FileReader::get_partitions() { return partitions_; }
-
-const std::vector<FilePartition> &FileReader::get_partitions() const {
+std::vector<FilePartition> &CopiedFileReader::get_partitions() {
   return partitions_;
 }
 
-const FileMetadata &FileReader::metadata() const { return metadata_; }
+const std::vector<FilePartition> &CopiedFileReader::get_partitions() const {
+  return partitions_;
+}
 
-void FileReader::load_file_bytes() {
+const FileMetadata &CopiedFileReader::metadata() const { return metadata_; }
+
+void CopiedFileReader::load_file_bytes() {
   std::error_code filesystem_error;
   const std::filesystem::path path(file_path_);
   const auto file_size = std::filesystem::file_size(path, filesystem_error);
@@ -104,8 +106,8 @@ void FileReader::load_file_bytes() {
 // offset for the nearest newline character. If no newline is found before the
 // target offset, the function throw an error
 size_t
-FileReader::find_next_partition_start(size_t current_partition_start,
-                                      size_t partition_size_bytes) const {
+CopiedFileReader::find_next_partition_start(size_t current_partition_start,
+                                            size_t partition_size_bytes) const {
   const size_t target_offset = current_partition_start + partition_size_bytes;
   size_t offset = target_offset;
   while (true) {

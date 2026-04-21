@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gpjson/file/file_reader.hpp"
 #include "gpjson/index/index_builder.hpp"
 #include "gpjson/query/query.hpp"
 
@@ -10,6 +11,7 @@
 namespace gpjson {
 
 struct EngineOptions {
+  file::FileReaderOptions file_reader_options;
   index::IndexBuilderOptions index_builder_options;
 };
 

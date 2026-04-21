@@ -121,6 +121,9 @@ serialize_result(const std::filesystem::path &dataset_path,
 
 inline gpjson::EngineOptions benchmark_engine_options() {
   return gpjson::EngineOptions{
+      gpjson::file::FileReaderOptions{
+          gpjson::file::FileReaderType::COPIED,
+      },
       gpjson::index::IndexBuilderOptions{
           gpjson::index::IndexBuilderType::COMBINED,
           // the file itself is 800 MB, so a partition size of 64 MB is

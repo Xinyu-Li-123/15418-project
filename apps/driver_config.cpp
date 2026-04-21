@@ -192,6 +192,12 @@ private:
 };
 
 template <class Binder>
+void bind_file_reader_options(Binder &binder,
+                              gpjson::file::FileReaderOptions &options) {
+  binder.enum_value("file_reader.type", options.file_reader_type);
+}
+
+template <class Binder>
 void bind_index_builder_options(Binder &binder,
                                 gpjson::index::IndexBuilderOptions &options) {
   binder.enum_value("index_builder.type", options.index_builder_type);
@@ -209,6 +215,7 @@ template <class Binder>
 void bind_driver_inputs(Binder &binder, DriverInputs &inputs) {
   binder.value("dataset_path", inputs.dataset_path, {"dataset"});
   binder.list("queries", inputs.queries, {"query", "q"});
+  bind_file_reader_options(binder, inputs.engine_options.file_reader_options);
   bind_index_builder_options(binder,
                              inputs.engine_options.index_builder_options);
 }

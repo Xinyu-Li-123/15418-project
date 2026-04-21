@@ -52,7 +52,10 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
 
   EXPECT_TRUE(inputs.dataset_path.empty());
   EXPECT_TRUE(inputs.queries.empty());
+  const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  EXPECT_EQ(file_reader_options.file_reader_type,
+            gpjson::file::FileReaderType::COPIED);
   EXPECT_EQ(index_options.index_builder_type,
             gpjson::index::IndexBuilderType::UNCOMBINED);
   EXPECT_EQ(index_options.file_partition_size, 0U);
@@ -66,6 +69,9 @@ TEST(DriverConfigTest, ParsesTomlConfig) {
   const std::filesystem::path config_path = write_temp_config(R"toml(
 dataset_path = "dataset/input.json"
 queries = ["$.user.lang", "$.user.id"]
+
+[file_reader]
+type = "MMAP"
 
 [index_builder]
 type = "COMBINED"
@@ -84,7 +90,10 @@ reduction_block_size = 16
   EXPECT_EQ(inputs.queries[0], "$.user.lang");
   EXPECT_EQ(inputs.queries[1], "$.user.id");
 
+  const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  EXPECT_EQ(file_reader_options.file_reader_type,
+            gpjson::file::FileReaderType::MMAP);
   EXPECT_EQ(index_options.index_builder_type,
             gpjson::index::IndexBuilderType::COMBINED);
   EXPECT_EQ(index_options.file_partition_size, 65536U);
@@ -101,24 +110,30 @@ TEST(DriverConfigTest, CliOverridesTomlConfig) {
 dataset_path = "dataset/from_toml.json"
 queries = ["$.toml"]
 
+[file_reader]
+type = "COPIED"
+
 [index_builder]
 type = "UNCOMBINED"
 grid_size = 1
 block_size = 2
 )toml");
 
-  const gpjson::driver::DriverInputs inputs =
-      parse_args({"gpjson_driver", "--config", config_path.string(),
-                  "--dataset", "dataset/from_cli.json", "--query", "$.cli.one",
-                  "--query", "$.cli.two", "--index-builder.type", "COMBINED",
-                  "--index-builder.grid-size", "16384"});
+  const gpjson::driver::DriverInputs inputs = parse_args(
+      {"gpjson_driver", "--config", config_path.string(), "--dataset",
+       "dataset/from_cli.json", "--query", "$.cli.one", "--query", "$.cli.two",
+       "--index-builder.type", "COMBINED", "--file-reader.type", "MMAP",
+       "--index-builder.grid-size", "16384"});
 
   EXPECT_EQ(inputs.dataset_path, "dataset/from_cli.json");
   ASSERT_EQ(inputs.queries.size(), 2U);
   EXPECT_EQ(inputs.queries[0], "$.cli.one");
   EXPECT_EQ(inputs.queries[1], "$.cli.two");
 
+  const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  EXPECT_EQ(file_reader_options.file_reader_type,
+            gpjson::file::FileReaderType::MMAP);
   EXPECT_EQ(index_options.index_builder_type,
             gpjson::index::IndexBuilderType::COMBINED);
   EXPECT_EQ(index_options.grid_size, 16384);
@@ -128,6 +143,12 @@ block_size = 2
 }
 
 TEST(DriverConfigTest, ParsesEnumAliases) {
+  EXPECT_EQ(
+      gpjson::driver::parse_enum_value<gpjson::file::FileReaderType>("COPIED"),
+      gpjson::file::FileReaderType::COPIED);
+  EXPECT_EQ(
+      gpjson::driver::parse_enum_value<gpjson::file::FileReaderType>("MMAP"),
+      gpjson::file::FileReaderType::MMAP);
   EXPECT_EQ(gpjson::driver::parse_enum_value<gpjson::index::IndexBuilderType>(
                 "COMBINED"),
             gpjson::index::IndexBuilderType::COMBINED);
@@ -137,6 +158,9 @@ TEST(DriverConfigTest, ParsesEnumAliases) {
 }
 
 TEST(DriverConfigTest, RejectsInvalidEnum) {
+  EXPECT_THROW(gpjson::driver::parse_enum_value<gpjson::file::FileReaderType>(
+                   "BAD_READER"),
+               std::runtime_error);
   EXPECT_THROW(
       gpjson::driver::parse_enum_value<gpjson::index::IndexBuilderType>(
           "BAD_BUILDER"),

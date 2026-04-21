@@ -9,8 +9,8 @@
 
 namespace {
 
+using gpjson::file::CopiedFileReader;
 using gpjson::file::FilePartition;
-using gpjson::file::FileReader;
 
 std::string bytes_to_string(const void *bytes, size_t size) {
   if (bytes == nullptr || size == 0) {
@@ -66,7 +66,7 @@ TEST_F(FileReaderTest, CreatesSinglePartitionForWholeFile) {
   const auto path =
       create_file("gpjson_file_reader_single_partition.json", contents);
 
-  FileReader reader(path.string());
+  CopiedFileReader reader(path.string());
   reader.create_partitions(0);
 
   const auto &metadata = reader.metadata();
@@ -83,7 +83,7 @@ TEST_F(FileReaderTest, SplitsPartitionsAtNewlineBoundaries) {
   const std::string contents = "alpha\nbeta\ngamma";
   create_file("gpjson_file_reader_partitioned.txt", contents);
 
-  FileReader reader(temp_path().string());
+  CopiedFileReader reader(temp_path().string());
   reader.create_partitions(7);
 
   const auto &metadata = reader.metadata();
@@ -100,7 +100,7 @@ TEST_F(FileReaderTest, SplitsPartitionsAtNewlineBoundaries) {
 TEST_F(FileReaderTest, ThrowsWhenNoNewlineExistsBeforeBoundary) {
   create_file("gpjson_file_reader_partition_error.txt", "abcdefghij");
 
-  FileReader reader(temp_path().string());
+  CopiedFileReader reader(temp_path().string());
   EXPECT_THROW(reader.create_partitions(4),
                gpjson::error::file::PartitionError);
 }

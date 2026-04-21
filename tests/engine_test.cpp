@@ -1,5 +1,6 @@
 #include "gpjson/engine.hpp"
 
+#include "gpjson/error/common.hpp"
 #include "utils/utils.hpp"
 
 #include <gtest/gtest.h>
@@ -44,12 +45,15 @@ private:
 TEST_F(EngineIntegrationTest, QueriesPartitionedLdJsonFileEndToEnd) {
   GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
-  const auto path = create_file(
-      "gpjson_engine_partitioned.ldjson",
-      "{\"name\":\"Ada\",\"scores\":[1,2],\"lang\":\"en\"}\n"
-      "{\"name\":\"Bob\",\"scores\":[3,4],\"lang\":\"fr\"}\n");
+  const auto path =
+      create_file("gpjson_engine_partitioned.ldjson",
+                  "{\"name\":\"Ada\",\"scores\":[1,2],\"lang\":\"en\"}\n"
+                  "{\"name\":\"Bob\",\"scores\":[3,4],\"lang\":\"fr\"}\n");
 
   const gpjson::EngineOptions options{
+      gpjson::file::FileReaderOptions{
+          gpjson::file::FileReaderType::COPIED,
+      },
       gpjson::index::IndexBuilderOptions{
           gpjson::index::IndexBuilderType::UNCOMBINED,
           43,
@@ -83,6 +87,24 @@ TEST_F(EngineIntegrationTest, QueriesPartitionedLdJsonFileEndToEnd) {
   ASSERT_EQ(result.queries()[1].lines()[1].values().size(), 1U);
   EXPECT_EQ(result.queries()[1].lines()[0].values()[0].json_text(), "2");
   EXPECT_EQ(result.queries()[1].lines()[1].values()[0].json_text(), "4");
+}
+
+TEST_F(EngineIntegrationTest, RejectsUnimplementedMmapFileReader) {
+  const auto path = create_file("gpjson_engine_unimplemented_mmap.ldjson",
+                                "{\"name\":\"Ada\"}\n");
+
+  const gpjson::EngineOptions options{
+      gpjson::file::FileReaderOptions{
+          gpjson::file::FileReaderType::MMAP,
+      },
+      gpjson::index::IndexBuilderOptions{},
+  };
+  const std::vector<std::string> queries{"$.name"};
+
+  gpjson::Engine engine;
+
+  EXPECT_THROW(engine.query(path.string(), queries, options),
+               gpjson::error::common::ImplementationError);
 }
 
 } // namespace
