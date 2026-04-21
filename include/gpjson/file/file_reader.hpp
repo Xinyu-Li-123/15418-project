@@ -38,12 +38,37 @@ public:
 
 private:
   void load_file_bytes();
-  size_t find_next_partition_start(size_t current_partition_start,
-                                   size_t partition_size_bytes) const;
 
   std::string file_path_;
   FileMetadata metadata_;
   std::vector<std::byte> mapped_bytes_;
+  std::vector<FilePartition> partitions_;
+};
+
+class MmapFileReader final : public FileReader {
+public:
+  explicit MmapFileReader(std::string file_path);
+  ~MmapFileReader() override;
+
+  MmapFileReader(const MmapFileReader &) = delete;
+  MmapFileReader &operator=(const MmapFileReader &) = delete;
+  MmapFileReader(MmapFileReader &&) = delete;
+  MmapFileReader &operator=(MmapFileReader &&) = delete;
+
+  void create_partitions(size_t partition_size_bytes) override;
+  std::vector<FilePartition> &get_partitions() override;
+  const std::vector<FilePartition> &get_partitions() const override;
+  const FileMetadata &metadata() const override;
+
+private:
+  void map_file_bytes();
+  void release_mapping() noexcept;
+
+  std::string file_path_;
+  FileMetadata metadata_;
+  const std::byte *mapped_bytes_{nullptr};
+  size_t mapped_size_bytes_{0};
+  int fd_{-1};
   std::vector<FilePartition> partitions_;
 };
 

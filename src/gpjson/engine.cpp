@@ -21,8 +21,7 @@ create_file_reader(const std::string &file_path,
     return std::make_unique<file::CopiedFileReader>(file_path);
 
   case file::FileReaderType::MMAP:
-    throw error::common::ImplementationError(
-        "MMAP file reader is not implemented.");
+    return std::make_unique<file::MmapFileReader>(file_path);
 
   default:
     throw error::common::ImplementationError("Undefined file reader type.");
