@@ -54,6 +54,7 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
   EXPECT_TRUE(inputs.queries.empty());
   const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  const auto &query_options = inputs.engine_options.query_executor_options;
   EXPECT_EQ(file_reader_options.file_reader_type,
             gpjson::file::FileReaderType::COPIED);
   EXPECT_EQ(index_options.index_builder_type,
@@ -63,6 +64,8 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
   EXPECT_EQ(index_options.block_size, 0);
   EXPECT_EQ(index_options.reduction_grid_size, 0);
   EXPECT_EQ(index_options.reduction_block_size, 0);
+  EXPECT_EQ(query_options.grid_size, 512);
+  EXPECT_EQ(query_options.block_size, 1024);
 }
 
 TEST(DriverConfigTest, ParsesTomlConfig) {
@@ -80,6 +83,10 @@ grid_size = 16384
 block_size = 1024
 reduction_grid_size = 32
 reduction_block_size = 16
+
+[query_executor]
+grid_size = 99
+block_size = 128
 )toml");
 
   const gpjson::driver::DriverInputs inputs =
@@ -92,6 +99,7 @@ reduction_block_size = 16
 
   const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  const auto &query_options = inputs.engine_options.query_executor_options;
   EXPECT_EQ(file_reader_options.file_reader_type,
             gpjson::file::FileReaderType::MMAP);
   EXPECT_EQ(index_options.index_builder_type,
@@ -101,6 +109,8 @@ reduction_block_size = 16
   EXPECT_EQ(index_options.block_size, 1024);
   EXPECT_EQ(index_options.reduction_grid_size, 32);
   EXPECT_EQ(index_options.reduction_block_size, 16);
+  EXPECT_EQ(query_options.grid_size, 99);
+  EXPECT_EQ(query_options.block_size, 128);
 
   std::filesystem::remove(config_path);
 }
@@ -117,13 +127,18 @@ type = "COPIED"
 type = "UNCOMBINED"
 grid_size = 1
 block_size = 2
+
+[query_executor]
+grid_size = 3
+block_size = 4
 )toml");
 
   const gpjson::driver::DriverInputs inputs = parse_args(
       {"gpjson_driver", "--config", config_path.string(), "--dataset",
        "dataset/from_cli.json", "--query", "$.cli.one", "--query", "$.cli.two",
        "--index-builder.type", "COMBINED", "--file-reader.type", "MMAP",
-       "--index-builder.grid-size", "16384"});
+       "--index-builder.grid-size", "16384", "--query-executor.grid-size", "55",
+       "--query-executor.block-size", "64"});
 
   EXPECT_EQ(inputs.dataset_path, "dataset/from_cli.json");
   ASSERT_EQ(inputs.queries.size(), 2U);
@@ -132,14 +147,27 @@ block_size = 2
 
   const auto &file_reader_options = inputs.engine_options.file_reader_options;
   const auto &index_options = inputs.engine_options.index_builder_options;
+  const auto &query_options = inputs.engine_options.query_executor_options;
   EXPECT_EQ(file_reader_options.file_reader_type,
             gpjson::file::FileReaderType::MMAP);
   EXPECT_EQ(index_options.index_builder_type,
             gpjson::index::IndexBuilderType::COMBINED);
   EXPECT_EQ(index_options.grid_size, 16384);
   EXPECT_EQ(index_options.block_size, 2);
+  EXPECT_EQ(query_options.grid_size, 55);
+  EXPECT_EQ(query_options.block_size, 64);
 
   std::filesystem::remove(config_path);
+}
+
+TEST(DriverConfigTest, RejectsNegativeQueryExecutorLaunchSizes) {
+  gpjson::driver::DriverInputs inputs = gpjson::driver::default_driver_inputs();
+  inputs.dataset_path = "dataset/input.json";
+  inputs.queries = {"$.user.lang"};
+  inputs.engine_options.query_executor_options.grid_size = -1;
+
+  EXPECT_THROW(gpjson::driver::validate_driver_inputs(inputs),
+               std::runtime_error);
 }
 
 TEST(DriverConfigTest, ParsesEnumAliases) {

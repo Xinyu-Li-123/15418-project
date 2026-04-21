@@ -166,6 +166,8 @@ TEST(QueryExecutorTest, ExecutesCompiledQueriesWithHandcraftedIndices) {
   BuiltIndices built_indices = build_single_line_indices(json_text);
 
   gpjson::EngineOptions options{};
+  options.query_executor_options.grid_size = 7;
+  options.query_executor_options.block_size = 32;
   const BatchCompiledQuery compiled_queries = compile_queries(options);
   QueryExecutor executor(options);
 
@@ -223,6 +225,8 @@ TEST(QueryExecutorTest, MaterializedResultsSkipUnmatchedLines) {
   BuiltIndices built_indices = build_single_line_indices(json_text);
 
   gpjson::EngineOptions options{};
+  options.query_executor_options.grid_size = 5;
+  options.query_executor_options.block_size = 64;
   QueryCompiler compiler(options);
   BatchCompiledQuery compiled_queries;
   compiled_queries.add(compiler.compile("$.store.magazine", options));

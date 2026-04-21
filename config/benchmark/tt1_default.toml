@@ -10,3 +10,7 @@ grid_size = 16384
 block_size = 1024
 reduction_grid_size = 32
 reduction_block_size = 32
+
+[query_executor]
+grid_size = 512
+block_size = 1024

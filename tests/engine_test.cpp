@@ -31,6 +31,10 @@ integration_engine_options(gpjson::file::FileReaderType file_reader_type =
           1,
           64,
       },
+      gpjson::query::QueryExecutorOptions{
+          512,
+          1024,
+      },
   };
 }
 
