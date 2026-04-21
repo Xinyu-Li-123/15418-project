@@ -83,21 +83,32 @@ Engine::query(const std::string &file_path,
   if (queries_src.empty()) {
     return {};
   }
+  profiler::Profiler profiler;
+  const profiler::Profiler::SegmentId engine_query =
+      profiler.begin("Engine::query");
 
   query::QueryCompiler query_compiler(options);
   query::QueryExecutor query_executor(options);
+  const profiler::Profiler::SegmentId query_compilation =
+      profiler.begin("query_compilation");
   const query::BatchCompiledQuery compiled_queries =
       compile_queries(queries_src, options, query_compiler);
+  profiler.end(query_compilation);
 
   file::FileReader file_reader(file_path);
-  file_reader.create_partitions(
-      options.index_builder_options.file_partition_size);
+  {
+
+    const auto create_partition_scope =
+        profiler.scope("file_reader.create_partitions");
+    (void)create_partition_scope;
+    file_reader.create_partitions(
+        options.index_builder_options.file_partition_size);
+  }
   std::unique_ptr<index::IndexBuilder> index_builder =
       create_index_builder(file_reader, options.index_builder_options);
 
   std::vector<query::MaterializedQueryResult> merged_queries =
       initialize_materialized_query_results(compiled_queries);
-  profiler::Profiler profiler;
 
   for (auto &partition : file_reader.get_partitions()) {
     const profiler::Profiler::SegmentId partition_total =
@@ -146,6 +157,7 @@ Engine::query(const std::string &file_path,
     merged_result.add_query_result(std::move(query_result));
   }
 
+  profiler.end(engine_query);
   profiler.print();
   return merged_result;
 }
