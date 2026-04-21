@@ -16,11 +16,16 @@
 #include "gpjson/index/index.hpp"
 #include "gpjson/index/index_builder.hpp"
 
+#include <gtest/gtest.h>
+
+#include <array>
 #include <cuda_runtime_api.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +33,12 @@
 namespace gpjson::test::index {
 
 inline constexpr int kMaxDepth = 8;
+inline constexpr std::array<gpjson::index::IndexBuilderType, 3>
+    kIndexBuilderTypes{
+        gpjson::index::IndexBuilderType::UNCOMBINED,
+        gpjson::index::IndexBuilderType::COMBINED,
+        gpjson::index::IndexBuilderType::FUSED,
+    };
 
 inline long word_from_bits(uint64_t bits) {
   long word = 0;
@@ -86,9 +97,45 @@ inline std::vector<long> copy_index_words(const gpjson::index::Index &index) {
   return words;
 }
 
-inline gpjson::index::IndexBuilderOptions small_builder_options() {
+inline const char *
+index_builder_type_name(gpjson::index::IndexBuilderType builder_type) {
+  switch (builder_type) {
+  case gpjson::index::IndexBuilderType::UNCOMBINED:
+    return "UNCOMBINED";
+  case gpjson::index::IndexBuilderType::COMBINED:
+    return "COMBINED";
+  case gpjson::index::IndexBuilderType::FUSED:
+    return "FUSED";
+  }
+
+  throw std::invalid_argument("Unknown index builder type.");
+}
+
+inline std::string index_builder_type_test_name(
+    const ::testing::TestParamInfo<gpjson::index::IndexBuilderType> &info) {
+  return index_builder_type_name(info.param);
+}
+
+inline std::unique_ptr<gpjson::index::IndexBuilder>
+make_index_builder(gpjson::index::IndexBuilderType builder_type,
+                   const gpjson::file::FileReader &file_reader) {
+  switch (builder_type) {
+  case gpjson::index::IndexBuilderType::UNCOMBINED:
+    return std::make_unique<gpjson::index::UncombinedIndexBuilder>(file_reader);
+  case gpjson::index::IndexBuilderType::COMBINED:
+    return std::make_unique<gpjson::index::CombinedIndexBuilder>(file_reader);
+  case gpjson::index::IndexBuilderType::FUSED:
+    return std::make_unique<gpjson::index::FusedIndexBuilder>(file_reader);
+  }
+
+  throw std::invalid_argument("Unknown index builder type.");
+}
+
+inline gpjson::index::IndexBuilderOptions
+small_builder_options(gpjson::index::IndexBuilderType builder_type =
+                          gpjson::index::IndexBuilderType::UNCOMBINED) {
   return gpjson::index::IndexBuilderOptions{
-      gpjson::index::IndexBuilderType::UNCOMBINED, 0, 1, 64, 1, 64,
+      builder_type, 0, 1, 64, 1, 64,
   };
 }
 
