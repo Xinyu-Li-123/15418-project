@@ -73,16 +73,16 @@ inline std::filesystem::path output_dir() {
 
 inline std::string lowercase(std::string value) {
   for (char &character : value) {
-    character = static_cast<char>(
-        std::tolower(static_cast<unsigned char>(character)));
+    character =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
   }
   return value;
 }
 
-inline std::string serialize_result(
-    const std::filesystem::path &dataset_path,
-    const BenchmarkQueryCase &query_case,
-    const gpjson::query::MaterializedBatchResult &result) {
+inline std::string
+serialize_result(const std::filesystem::path &dataset_path,
+                 const BenchmarkQueryCase &query_case,
+                 const gpjson::query::MaterializedBatchResult &result) {
   std::ostringstream output;
   output << "case=" << query_case.name << '\n';
   output << "dataset=" << dataset_path.string() << '\n';
@@ -123,9 +123,11 @@ inline gpjson::EngineOptions benchmark_engine_options() {
   return gpjson::EngineOptions{
       gpjson::index::IndexBuilderOptions{
           gpjson::index::IndexBuilderType::COMBINED,
-          65536,
-          1,
-          256,
+          // the file itself is 800 MB, so a partition size of 64 MB is
+          // reasonable
+          (2 << 26),
+          16384,
+          1024,
           32,
           32,
       },
@@ -149,11 +151,11 @@ count_matches(const gpjson::query::MaterializedBatchResult &result) {
   return run_result;
 }
 
-inline void print_match_counts(
-    const std::filesystem::path &dataset_path,
-    const BenchmarkQueryCase &query_case,
-    const gpjson::query::MaterializedBatchResult &result,
-    const BenchmarkRunResult &run_result) {
+inline void
+print_match_counts(const std::filesystem::path &dataset_path,
+                   const BenchmarkQueryCase &query_case,
+                   const gpjson::query::MaterializedBatchResult &result,
+                   const BenchmarkRunResult &run_result) {
   std::cout << "case=" << query_case.name << '\n';
   std::cout << "dataset=" << dataset_path.string() << '\n';
   std::cout << "total_match_count=" << run_result.total_match_count << '\n';
@@ -170,10 +172,10 @@ inline void print_match_counts(
 
 class BenchmarkOutputTestBase : public ::testing::Test {
 protected:
-  BenchmarkRunResult run_case(
-      const std::filesystem::path &dataset_path,
-      const BenchmarkQueryCase &query_case,
-      const BenchmarkRunOptions &options = BenchmarkRunOptions{}) {
+  BenchmarkRunResult
+  run_case(const std::filesystem::path &dataset_path,
+           const BenchmarkQueryCase &query_case,
+           const BenchmarkRunOptions &options = BenchmarkRunOptions{}) {
     if (!std::filesystem::exists(dataset_path)) {
       ADD_FAILURE() << "Missing dataset: " << dataset_path;
       return BenchmarkRunResult{};
@@ -188,7 +190,7 @@ protected:
     }
 
     BenchmarkRunResult run_result = count_matches(result);
-    
+
     if (options.result_mode == BenchmarkResultMode::CountMatchesOnly) {
       std::cout << "=== Match Counts Only ===\n";
       print_match_counts(dataset_path, query_case, result, run_result);
@@ -197,8 +199,8 @@ protected:
     std::cout << "=== Full Result Output ===\n";
     std::filesystem::create_directories(output_dir());
     run_result.output_path =
-        output_dir() / (lowercase(query_case.name) + options.output_suffix +
-                        "_output.txt");
+        output_dir() /
+        (lowercase(query_case.name) + options.output_suffix + "_output.txt");
 
     std::ofstream output(run_result.output_path,
                          std::ios::binary | std::ios::trunc);
