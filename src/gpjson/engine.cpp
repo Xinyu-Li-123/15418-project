@@ -3,6 +3,7 @@
 #include "gpjson/error/common.hpp"
 #include "gpjson/file/file_reader.hpp"
 #include "gpjson/index/index_builder.hpp"
+#include "gpjson/profiler/profiler.hpp"
 #include "gpjson/query/query_compiler.hpp"
 #include "gpjson/query/query_executor.hpp"
 
@@ -96,16 +97,48 @@ Engine::query(const std::string &file_path,
 
   std::vector<query::MaterializedQueryResult> merged_queries =
       initialize_materialized_query_results(compiled_queries);
+  profiler::Profiler profiler;
 
   for (auto &partition : file_reader.get_partitions()) {
-    partition.load_to_device();
-    index::BuiltIndices built_indices =
-        index_builder->build(partition, compiled_queries.get_max_depth(),
-                             options.index_builder_options);
-    const query::MaterializedBatchResult partition_result =
-        query_executor.execute_batch(compiled_queries, partition, built_indices)
-            .materialize();
+    const profiler::Profiler::SegmentId partition_total =
+        profiler.beginf("partition %zu total", partition.partition_id());
+
+    {
+      const auto load_scope = profiler.scopef("partition %zu load_to_device",
+                                              partition.partition_id());
+      (void)load_scope;
+      partition.load_to_device();
+    }
+
+    index::BuiltIndices built_indices;
+    {
+      const auto index_scope = profiler.scopef("partition %zu build_index",
+                                               partition.partition_id());
+      (void)index_scope;
+      built_indices =
+          index_builder->build(partition, compiled_queries.get_max_depth(),
+                               options.index_builder_options);
+    }
+
+    query::BatchQueryResult batch_result(compiled_queries.size());
+    {
+      const auto execute_scope = profiler.scopef("partition %zu execute_query",
+                                                 partition.partition_id());
+      (void)execute_scope;
+      batch_result = query_executor.execute_batch(compiled_queries, partition,
+                                                  built_indices);
+    }
+
+    query::MaterializedBatchResult partition_result;
+    {
+      const auto materialize_scope = profiler.scopef(
+          "partition %zu materialize_results", partition.partition_id());
+      (void)materialize_scope;
+      partition_result = batch_result.materialize();
+    }
+
     append_partition_results(merged_queries, partition_result);
+    profiler.end(partition_total);
   }
 
   query::MaterializedBatchResult merged_result;
@@ -113,6 +146,7 @@ Engine::query(const std::string &file_path,
     merged_result.add_query_result(std::move(query_result));
   }
 
+  profiler.print();
   return merged_result;
 }
 
