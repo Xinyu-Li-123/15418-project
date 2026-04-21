@@ -3,16 +3,38 @@
 #include "gpjson/file/file.hpp"
 
 #include <cstddef>
+#include <iosfwd>
+#include <ostream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace gpjson::file {
 
 enum class FileReaderType { COPIED = 0, MMAP };
 
+inline std::ostream &operator<<(std::ostream &os, FileReaderType type) {
+  switch (type) {
+  case FileReaderType::COPIED:
+    return os << "COPIED";
+  case FileReaderType::MMAP:
+    return os << "MMAP";
+  default:
+    return os << "UNKNOWN("
+              << static_cast<std::underlying_type_t<FileReaderType>>(type)
+              << ")";
+  }
+}
+
 struct FileReaderOptions {
   file::FileReaderType file_reader_type{file::FileReaderType::COPIED};
 };
+
+inline std::ostream &operator<<(std::ostream &os,
+                                const FileReaderOptions &options) {
+  return os << "FileReaderOptions{file_reader_type=" << options.file_reader_type
+            << "}";
+}
 
 class FileReader {
 public:
