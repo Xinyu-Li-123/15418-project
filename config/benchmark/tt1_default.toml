@@ -2,7 +2,7 @@ dataset_path = "dataset/twitter_small_records_remove.json"
 queries = ["$.user.lang"]
 
 [file_reader]
-type = "COPIED"
+type = "MMAP"
 
 [index_builder]
 type = "COMBINED"
