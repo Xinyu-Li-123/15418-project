@@ -17,6 +17,7 @@ __global__ void combined_escape_newline_index(const char *file, int fileSize,
 
   bool carry = index == 0 ? false : escapeCarryIndex[index - 1];
 
+  long escape = 0;
   int escapeCount = 0;
   int totalCount = end - start;
 
@@ -26,7 +27,7 @@ __global__ void combined_escape_newline_index(const char *file, int fileSize,
     char value = file[i];
 
     if (carry == 1) {
-      escapeIndex[i / 64] |= (1L << (i % 64));
+      escape |= (1L << (i % 64));
     }
 
     if (value == '\\') {
@@ -39,6 +40,15 @@ __global__ void combined_escape_newline_index(const char *file, int fileSize,
     if (value == '\n') {
       newlineIndex[newlineOffset++] = i;
     }
+
+    if (i % 64 == 63) {
+      escapeIndex[i / 64] = escape;
+      escape = 0;
+    }
+  }
+
+  if (fileSize <= end && (fileSize - 1) % 64 != 63L && fileSize - start > 0) {
+    escapeIndex[(fileSize - 1) / 64] = escape;
   }
 
   assert(escapeCount != totalCount);

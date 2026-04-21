@@ -16,7 +16,7 @@ __global__ void query(const char *file, int file_size,
                       const long *newline_index, int newline_index_size,
                       const long *string_index,
                       const long *leveled_bitmaps_index, int level_size,
-                      const unsigned char *query, int num_results, int *result);
+                      int num_results, int *result);
 
 namespace {
 
@@ -181,14 +181,17 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
     const int num_results =
         narrow_size_to_int(compiled_query.num_result_slots(), "result slots");
     const size_t query_size = compiled_query.ir_bytes().size();
+    if (query_size > kMaxQueryIrBytes) {
+      throw execution_error("Compiled query IR exceeds constant memory buffer");
+    }
+
     const size_t host_result_count =
         static_cast<size_t>(num_lines) * static_cast<size_t>(num_results) * 2U;
 
-    cuda::DeviceArray device_query(query_size);
-    device_query.copy_from_host(compiled_query.ir_bytes().data(), query_size);
+    copy_query_ir_to_constant_memory(compiled_query.ir_bytes().data(),
+                                     query_size);
 
     cuda::DeviceArray device_result(host_result_count * sizeof(int));
-    device_result.memset(0xFF);
 
     LogInfo(
         "Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
@@ -200,8 +203,7 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
         static_cast<const long *>(built_indices.get_string_index().data()),
         static_cast<const long *>(
             built_indices.get_leveled_bitmap_index().data()),
-        level_size, device_query.as<unsigned char>(), num_results,
-        device_result.as<int>());
+        level_size, num_results, device_result.as<int>());
     cuda::check(cudaGetLastError(), "execute_query_kernel launch");
     cuda::synchronize();
 
