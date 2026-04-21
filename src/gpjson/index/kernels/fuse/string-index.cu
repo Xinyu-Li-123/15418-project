@@ -42,6 +42,9 @@ __global__ void string_index_using_escape_carry_index_quote_carry_index(
   bool is_cur_quoted = index == 0 ? false : quoteCarryIndex[index - 1];
 
   int i = start;
+  if (start >= fileSize) {
+    return;
+  }
   // The file is divided into a large sequence of 64-bit chunks.
   // We use a long to represent the bitmap for each 64-bit chunk.
   // Each thread is assigned a sub-sequence of 64-bit chunks

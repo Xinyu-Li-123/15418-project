@@ -121,7 +121,9 @@ create_newline_and_string_index(const OrigIndexBuilderContext &ctx) {
   cuda::synchronize();
   const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
                                                      ctx.num_cuda_threads());
+
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
+  copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
 
   // kernels::orig::escape_index<<<ctx.grid_size, ctx.block_size>>>(
   //     ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
