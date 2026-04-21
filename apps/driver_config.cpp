@@ -192,6 +192,12 @@ private:
 };
 
 template <class Binder>
+void bind_file_reader_options(Binder &binder,
+                              gpjson::file::FileReaderOptions &options) {
+  binder.enum_value("file_reader.type", options.file_reader_type);
+}
+
+template <class Binder>
 void bind_index_builder_options(Binder &binder,
                                 gpjson::index::IndexBuilderOptions &options) {
   binder.enum_value("index_builder.type", options.index_builder_type);
@@ -206,11 +212,21 @@ void bind_index_builder_options(Binder &binder,
 }
 
 template <class Binder>
+void bind_query_executor_options(Binder &binder,
+                                 gpjson::query::QueryExecutorOptions &options) {
+  binder.value("query_executor.grid_size", options.grid_size);
+  binder.value("query_executor.block_size", options.block_size);
+}
+
+template <class Binder>
 void bind_driver_inputs(Binder &binder, DriverInputs &inputs) {
   binder.value("dataset_path", inputs.dataset_path, {"dataset"});
   binder.list("queries", inputs.queries, {"query", "q"});
+  bind_file_reader_options(binder, inputs.engine_options.file_reader_options);
   bind_index_builder_options(binder,
                              inputs.engine_options.index_builder_options);
+  bind_query_executor_options(binder,
+                              inputs.engine_options.query_executor_options);
 }
 
 std::optional<std::filesystem::path> parse_config_path(int argc, char **argv) {
@@ -277,11 +293,17 @@ void validate_driver_inputs(const DriverInputs &inputs) {
   }
 
   const auto &options = inputs.engine_options.index_builder_options;
+  const auto &query_options = inputs.engine_options.query_executor_options;
 
   if (options.grid_size < 0 || options.block_size < 0 ||
       options.reduction_grid_size < 0 || options.reduction_block_size < 0) {
     throw std::runtime_error(
         "Index builder grid and block sizes must be non-negative.");
+  }
+
+  if (query_options.grid_size < 0 || query_options.block_size < 0) {
+    throw std::runtime_error(
+        "Query executor grid and block sizes must be non-negative.");
   }
 }
 

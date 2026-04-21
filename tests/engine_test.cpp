@@ -1,5 +1,7 @@
 #include "gpjson/engine.hpp"
 
+#include "gpjson/file/file_reader.hpp"
+#include "gpjson/index/index_builder.hpp"
 #include "utils/utils.hpp"
 
 #include <gtest/gtest.h>
@@ -11,6 +13,49 @@
 #include <vector>
 
 namespace {
+
+gpjson::EngineOptions
+integration_engine_options(gpjson::file::FileReaderType file_reader_type =
+                               gpjson::file::FileReaderType::MMAP,
+                           gpjson::index::IndexBuilderType index_builder_type =
+                               gpjson::index::IndexBuilderType::COMBINED) {
+  return gpjson::EngineOptions{
+      gpjson::file::FileReaderOptions{
+          file_reader_type,
+      },
+      gpjson::index::IndexBuilderOptions{
+          index_builder_type,
+          43,
+          1,
+          64,
+          1,
+          64,
+      },
+      gpjson::query::QueryExecutorOptions{
+          512,
+          1024,
+      },
+  };
+}
+
+void expect_sample_query_results(
+    const gpjson::query::MaterializedBatchResult &result) {
+  ASSERT_EQ(result.queries().size(), 2U);
+
+  ASSERT_EQ(result.queries()[0].query_text(), "$.name");
+  ASSERT_EQ(result.queries()[0].lines().size(), 2U);
+  ASSERT_EQ(result.queries()[0].lines()[0].values().size(), 1U);
+  ASSERT_EQ(result.queries()[0].lines()[1].values().size(), 1U);
+  EXPECT_EQ(result.queries()[0].lines()[0].values()[0].json_text(), "\"Ada\"");
+  EXPECT_EQ(result.queries()[0].lines()[1].values()[0].json_text(), "\"Bob\"");
+
+  ASSERT_EQ(result.queries()[1].query_text(), "$.scores[1]");
+  ASSERT_EQ(result.queries()[1].lines().size(), 2U);
+  ASSERT_EQ(result.queries()[1].lines()[0].values().size(), 1U);
+  ASSERT_EQ(result.queries()[1].lines()[1].values().size(), 1U);
+  EXPECT_EQ(result.queries()[1].lines()[0].values()[0].json_text(), "2");
+  EXPECT_EQ(result.queries()[1].lines()[1].values()[0].json_text(), "4");
+}
 
 std::filesystem::path write_temp_file(const std::string &filename,
                                       const std::string &contents) {
@@ -41,24 +86,18 @@ private:
   std::filesystem::path temp_path_;
 };
 
-TEST_F(EngineIntegrationTest, QueriesPartitionedLdJsonFileEndToEnd) {
+TEST_F(EngineIntegrationTest,
+       QueriesPartitionedLdJsonFileWithOverriddenOptions) {
   GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
-  const auto path = create_file(
-      "gpjson_engine_partitioned.ldjson",
-      "{\"name\":\"Ada\",\"scores\":[1,2],\"lang\":\"en\"}\n"
-      "{\"name\":\"Bob\",\"scores\":[3,4],\"lang\":\"fr\"}\n");
+  const auto path =
+      create_file("gpjson_engine_partitioned.ldjson",
+                  "{\"name\":\"Ada\",\"scores\":[1,2],\"lang\":\"en\"}\n"
+                  "{\"name\":\"Bob\",\"scores\":[3,4],\"lang\":\"fr\"}\n");
 
-  const gpjson::EngineOptions options{
-      gpjson::index::IndexBuilderOptions{
-          gpjson::index::IndexBuilderType::UNCOMBINED,
-          43,
-          1,
-          64,
-          1,
-          64,
-      },
-  };
+  const gpjson::EngineOptions options =
+      integration_engine_options(gpjson::file::FileReaderType::COPIED,
+                                 gpjson::index::IndexBuilderType::UNCOMBINED);
 
   gpjson::Engine engine;
   const std::vector<std::string> queries{
@@ -67,22 +106,26 @@ TEST_F(EngineIntegrationTest, QueriesPartitionedLdJsonFileEndToEnd) {
   };
 
   const auto result = engine.query(path.string(), queries, options);
+  expect_sample_query_results(result);
+}
 
-  ASSERT_EQ(result.queries().size(), 2U);
+TEST_F(EngineIntegrationTest, QueriesLdJsonFileEndToEndWithDefaultTestOptions) {
+  GPJSON_SKIP_IF_CUDA_UNAVAILABLE();
 
-  ASSERT_EQ(result.queries()[0].query_text(), "$.name");
-  ASSERT_EQ(result.queries()[0].lines().size(), 2U);
-  ASSERT_EQ(result.queries()[0].lines()[0].values().size(), 1U);
-  ASSERT_EQ(result.queries()[0].lines()[1].values().size(), 1U);
-  EXPECT_EQ(result.queries()[0].lines()[0].values()[0].json_text(), "\"Ada\"");
-  EXPECT_EQ(result.queries()[0].lines()[1].values()[0].json_text(), "\"Bob\"");
+  const auto path =
+      create_file("gpjson_engine_mmap.ldjson",
+                  "{\"name\":\"Ada\",\"scores\":[1,2],\"lang\":\"en\"}\n"
+                  "{\"name\":\"Bob\",\"scores\":[3,4],\"lang\":\"fr\"}\n");
 
-  ASSERT_EQ(result.queries()[1].query_text(), "$.scores[1]");
-  ASSERT_EQ(result.queries()[1].lines().size(), 2U);
-  ASSERT_EQ(result.queries()[1].lines()[0].values().size(), 1U);
-  ASSERT_EQ(result.queries()[1].lines()[1].values().size(), 1U);
-  EXPECT_EQ(result.queries()[1].lines()[0].values()[0].json_text(), "2");
-  EXPECT_EQ(result.queries()[1].lines()[1].values()[0].json_text(), "4");
+  const gpjson::EngineOptions options = integration_engine_options();
+  const std::vector<std::string> queries{
+      "$.name",
+      "$.scores[1]",
+  };
+
+  gpjson::Engine engine;
+  const auto result = engine.query(path.string(), queries, options);
+  expect_sample_query_results(result);
 }
 
 } // namespace

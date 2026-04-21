@@ -6,8 +6,8 @@
 namespace gpjson::query {
 
 QueryExecutor::QueryExecutor(const gpjson::EngineOptions &options)
-    : grid_size_(options.index_builder_options.grid_size),
-      block_size_(options.index_builder_options.block_size) {}
+    : grid_size_(options.query_executor_options.grid_size),
+      block_size_(options.query_executor_options.block_size) {}
 
 BatchQueryResult
 QueryExecutor::execute_batch(const BatchCompiledQuery &compiled_queries,

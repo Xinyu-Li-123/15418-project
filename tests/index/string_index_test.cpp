@@ -63,7 +63,7 @@ TEST_P(StringIndexBuilderTest, BuildsStringIndex) {
   gpjson::test::index::StaticPartition partition(
       gpjson::test::index::ld_json_fixture());
   partition.load_to_device();
-  gpjson::file::FileReader file_reader{"in-memory.ldjson"};
+  gpjson::file::CopiedFileReader file_reader{"in-memory.ldjson"};
   const gpjson::index::IndexBuilderType builder_type = GetParam();
   auto builder =
       gpjson::test::index::make_index_builder(builder_type, file_reader);

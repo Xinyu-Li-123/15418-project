@@ -1,17 +1,32 @@
 #pragma once
 
+#include "gpjson/file/file_reader.hpp"
 #include "gpjson/index/index_builder.hpp"
 #include "gpjson/query/query.hpp"
+#include "gpjson/query/query_executor.hpp"
 
 #include <cstddef>
+#include <iosfwd>
+#include <ostream>
 #include <string>
 #include <vector>
 
 namespace gpjson {
 
 struct EngineOptions {
+  file::FileReaderOptions file_reader_options;
   index::IndexBuilderOptions index_builder_options;
+  query::QueryExecutorOptions query_executor_options;
 };
+
+inline std::ostream &operator<<(std::ostream &os,
+                                const EngineOptions &options) {
+  return os << "EngineOptions{file_reader_options="
+            << options.file_reader_options
+            << ", index_builder_options=" << options.index_builder_options
+            << ", query_executor_options=" << options.query_executor_options
+            << "}";
+}
 
 class Engine {
 public:
