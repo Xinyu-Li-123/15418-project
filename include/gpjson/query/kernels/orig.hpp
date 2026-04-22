@@ -4,14 +4,20 @@
 #include "gpjson/index/index.hpp"
 #include "gpjson/query/query.hpp"
 
+#include <cstddef>
+
 namespace gpjson::query::kernels::orig {
 
 inline constexpr int kMaxQueryLevels = 16;
+inline constexpr std::size_t kMaxQueryIrBytes = 4096;
 
 struct QueryExecutorOptions {
   int grid_size{512};
   int block_size{1024};
 };
+
+void copy_query_ir_to_constant_memory(const void *query_bytes,
+                                      std::size_t query_size);
 
 BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
                                const file::FilePartition &partition,

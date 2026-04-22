@@ -20,47 +20,50 @@ __global__ void leveled_bitmaps_index(const char *file, int fileSize,
   int start = index * bitmapAlignedCharsPerThread;
   int end = start + bitmapAlignedCharsPerThread;
 
-  for (int i = start; i < end && i < levelSize * numLevels; i += 1) {
-    for (int level = 0; level < numLevels; level += 1) {
-      leveledBitmapsIndex[levelSize * level + i / 64] = 0;
-    }
-  }
-
-  long string = 0;
   signed char level = leveledBitmapsAuxIndex[index];
 
-  for (int i = start; i < end && i < fileSize; i += 1) {
-    assert(level >= -1);
-
-    long offsetInBlock = i % 64;
-
-    if (offsetInBlock == 0) {
-      string = stringIndex[i / 64];
+  for (int blockStart = start; blockStart < end && blockStart < fileSize;
+       blockStart += 64) {
+    const int wordIndex = blockStart / 64;
+    const long string = stringIndex[wordIndex];
+    // Accumulate a full 64-bit output word locally, then write each level once.
+    long structuralBitmaps[kMaxNumLevels];
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
+      structuralBitmaps[bitmapLevel] = 0;
     }
 
-    if ((string & (1L << offsetInBlock)) != 0) {
-      continue;
+    const int blockEnd =
+        blockStart + 64 < fileSize ? blockStart + 64 : fileSize;
+    for (int i = blockStart; i < blockEnd; i += 1) {
+      assert(level >= -1);
+
+      const long offsetInBlock = i % 64;
+      const long bit = 1L << offsetInBlock;
+      if ((string & bit) != 0) {
+        continue;
+      }
+
+      const char value = file[i];
+      if (value == '{' || value == '[') {
+        level++;
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+      } else if (value == '}' || value == ']') {
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+        level--;
+      } else if (value == ':' || value == ',') {
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+      }
     }
 
-    char value = file[i];
-
-    if (value == '{' || value == '[') {
-      level++;
-      if (level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
-      }
-    } else if (value == '}' || value == ']') {
-      if (level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
-      }
-      level--;
-    } else if (value == ':' || value == ',') {
-      if (level >= 0 && level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
-      }
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
+      leveledBitmapsIndex[levelSize * bitmapLevel + wordIndex] =
+          structuralBitmaps[bitmapLevel];
     }
   }
 }

@@ -73,6 +73,7 @@ target_link_libraries(gpjson-cpp_lib PUBLIC CUDA::cudart)
 
 add_subdirectory(apps)
 
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
