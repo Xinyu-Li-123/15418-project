@@ -165,7 +165,6 @@ Engine::query(const std::string &file_path,
   }
 
   profiler.end(engine_query_timer);
-  profiler.print();
   return merged_result;
 }
 

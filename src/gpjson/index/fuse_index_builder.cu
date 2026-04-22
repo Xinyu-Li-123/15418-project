@@ -305,7 +305,6 @@ FusedIndexBuilder::build(const file::FilePartition &partition, size_t max_depth,
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
   profiler.end(build_timer);
-  profiler.print();
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }

@@ -68,23 +68,12 @@ void Profiler::end(SegmentId segment_id) {
   record.elapsed =
       std::chrono::duration_cast<Duration>(Clock::now() - record.start_time);
   record.completed = true;
-}
 
-void Profiler::print(FILE *out) const {
-  std::fprintf(out, "%s:\n", name_.c_str());
-  for (const SegmentRecord &record : segments_) {
-    if (!record.completed) {
-      Assert(false, "Profiler segment '%s' was not completed before printing.",
-             record.name.c_str());
-      std::fprintf(out, "  %s: incomplete\n", record.name.c_str());
-      continue;
-    }
-
-    const double elapsed_ms = static_cast<double>(record.elapsed.count()) /
-                              kNanosecondsPerMillisecond;
-    std::fprintf(out, "  %s: %.3f ms\n", record.name.c_str(), elapsed_ms);
-  }
-  std::fflush(out);
+  const double elapsed_ms =
+      static_cast<double>(record.elapsed.count()) / kNanosecondsPerMillisecond;
+  std::fprintf(stdout, "%s: %s: %.3f ms\n", name_.c_str(), record.name.c_str(),
+               elapsed_ms);
+  std::fflush(stdout);
 }
 
 std::string Profiler::vformat(const char *fmt, va_list args) const {

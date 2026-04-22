@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstddef>
-#include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,8 +37,6 @@ public:
   SegmentId beginf(const char *fmt, ...);
 
   void end(SegmentId segment_id);
-
-  void print(FILE *out = stdout) const;
 
 private:
   using Clock = std::chrono::steady_clock;
