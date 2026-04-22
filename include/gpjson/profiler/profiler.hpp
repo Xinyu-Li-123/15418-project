@@ -19,6 +19,8 @@ namespace gpjson::profiler {
 
 class Profiler {
 public:
+  explicit Profiler(std::string name = "Profiler");
+
   class SegmentId {
   public:
     SegmentId() = default;
@@ -54,6 +56,7 @@ private:
   SegmentId begin_formatted(const char *fmt, va_list args);
   std::string vformat(const char *fmt, va_list args) const;
 
+  std::string name_;
   std::vector<SegmentRecord> segments_;
 };
 } // namespace gpjson::profiler

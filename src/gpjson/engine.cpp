@@ -99,7 +99,7 @@ Engine::query(const std::string &file_path,
   if (queries_src.empty()) {
     return {};
   }
-  profiler::Profiler profiler;
+  profiler::Profiler profiler("Engine::query profiler");
   const profiler::Profiler::SegmentId engine_query_timer =
       profiler.begin("Engine::query");
 

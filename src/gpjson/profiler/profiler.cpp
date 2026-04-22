@@ -22,6 +22,8 @@ constexpr double kNanosecondsPerMillisecond = 1000000.0;
 
 } // namespace
 
+Profiler::Profiler(std::string name) : name_(std::move(name)) {}
+
 Profiler::SegmentId::SegmentId(size_t index) : index_(index), valid_(true) {}
 
 Profiler::SegmentId Profiler::begin(std::string_view name) {
@@ -69,7 +71,7 @@ void Profiler::end(SegmentId segment_id) {
 }
 
 void Profiler::print(FILE *out) const {
-  std::fprintf(out, "Profiler results:\n");
+  std::fprintf(out, "%s:\n", name_.c_str());
   for (const SegmentRecord &record : segments_) {
     if (!record.completed) {
       Assert(false, "Profiler segment '%s' was not completed before printing.",
