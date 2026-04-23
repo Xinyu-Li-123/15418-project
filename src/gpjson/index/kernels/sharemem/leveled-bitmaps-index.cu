@@ -2,66 +2,116 @@
 
 namespace gpjson::index::kernels::sharemem {
 namespace {
+
+constexpr int kWarpSize = 32;
+constexpr int kTileBytes = 64;
+constexpr int kMaxWarpsPerBlock = 32;
 constexpr int kMaxNumLevels = 22;
+
+__device__ __forceinline__ int lane_id() {
+  return threadIdx.x & (kWarpSize - 1);
 }
 
-__global__ void leveled_bitmaps_index(const char *file, int fileSize,
-                                      const long *stringIndex,
-                                      char *leveledBitmapsAuxIndex,
-                                      long *leveledBitmapsIndex, int levelSize,
-                                      int numLevels) {
-  assert(numLevels <= kMaxNumLevels);
+__device__ __forceinline__ int warp_id_in_block() {
+  return threadIdx.x / kWarpSize;
+}
 
-  int index = blockIdx.x * blockDim.x + threadIdx.x;
-  int stride = blockDim.x * gridDim.x;
+__device__ __forceinline__ int global_warp_id() {
+  const int warps_per_block = blockDim.x / kWarpSize;
+  return blockIdx.x * warps_per_block + warp_id_in_block();
+}
 
-  int charsPerThread = (fileSize + stride - 1) / stride;
-  int bitmapAlignedCharsPerThread = ((charsPerThread + 64 - 1) / 64) * 64;
-  int start = index * bitmapAlignedCharsPerThread;
-  int end = start + bitmapAlignedCharsPerThread;
+__device__ __forceinline__ int chunk_chars_per_warp(int file_size,
+                                                    int num_chunks) {
+  return (file_size + num_chunks - 1) / num_chunks;
+}
 
-  for (int i = start; i < end && i < levelSize * numLevels; i += 1) {
-    for (int level = 0; level < numLevels; level += 1) {
-      leveledBitmapsIndex[levelSize * level + i / 64] = 0;
-    }
+__device__ __forceinline__ int chunk_aligned_chars_per_warp(int file_size,
+                                                            int num_chunks) {
+  const int chars = chunk_chars_per_warp(file_size, num_chunks);
+  return ((chars + 64 - 1) / 64) * 64;
+}
+
+} // namespace
+
+__global__ void leveled_bitmaps_index(const char *file, int file_size,
+                                      const long *string_index,
+                                      const char *leveled_bitmaps_aux_index,
+                                      long *leveled_bitmaps_index,
+                                      int level_size, int num_levels,
+                                      int num_chunks) {
+  assert(num_levels <= kMaxNumLevels);
+
+  __shared__ unsigned char tile[kMaxWarpsPerBlock][kTileBytes];
+
+  const int warp = global_warp_id();
+  if (warp >= num_chunks) {
+    return;
   }
 
-  long string = 0;
-  signed char level = leveledBitmapsAuxIndex[index];
+  const int lane = lane_id();
+  const int warp_local = warp_id_in_block();
 
-  for (int i = start; i < end && i < fileSize; i += 1) {
-    assert(level >= -1);
+  const int aligned_chars_per_chunk =
+      chunk_aligned_chars_per_warp(file_size, num_chunks);
+  const int start = warp * aligned_chars_per_chunk;
+  const int end = min(start + aligned_chars_per_chunk, file_size);
 
-    long offsetInBlock = i % 64;
+  auto *string_index_u64 =
+      reinterpret_cast<const unsigned long long *>(string_index);
+  auto *leveled_bitmaps_index_u64 =
+      reinterpret_cast<unsigned long long *>(leveled_bitmaps_index);
 
-    if (offsetInBlock == 0) {
-      string = stringIndex[i / 64];
-    }
+  signed char level = static_cast<signed char>(leveled_bitmaps_aux_index[warp]);
 
-    if ((string & (1L << offsetInBlock)) != 0) {
-      continue;
-    }
+  for (int base = start; base < end; base += kTileBytes) {
+    const int pos0 = base + lane;
+    const int pos1 = base + kWarpSize + lane;
 
-    char value = file[i];
+    tile[warp_local][lane] =
+        (pos0 < end) ? static_cast<unsigned char>(file[pos0]) : 0;
+    tile[warp_local][kWarpSize + lane] =
+        (pos1 < end) ? static_cast<unsigned char>(file[pos1]) : 0;
+    __syncwarp();
 
-    if (value == '{' || value == '[') {
-      level++;
-      if (level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
+    if (lane == 0) {
+      const unsigned long long string_word = string_index_u64[base / 64];
+      const int valid = min(kTileBytes, end - base);
+
+      for (int i = 0; i < valid; ++i) {
+        assert(level >= -1);
+
+        if (((string_word >> i) & 1ull) != 0ull) {
+          continue;
+        }
+
+        const unsigned char c = tile[warp_local][i];
+        const int word_id = base / 64;
+
+        if (c == static_cast<unsigned char>('{') ||
+            c == static_cast<unsigned char>('[')) {
+          ++level;
+          if (level < num_levels) {
+            leveled_bitmaps_index_u64[level_size * level + word_id] |=
+                (1ull << i);
+          }
+        } else if (c == static_cast<unsigned char>('}') ||
+                   c == static_cast<unsigned char>(']')) {
+          if (level < num_levels) {
+            leveled_bitmaps_index_u64[level_size * level + word_id] |=
+                (1ull << i);
+          }
+          --level;
+        } else if (c == static_cast<unsigned char>(':') ||
+                   c == static_cast<unsigned char>(',')) {
+          if (level >= 0 && level < num_levels) {
+            leveled_bitmaps_index_u64[level_size * level + word_id] |=
+                (1ull << i);
+          }
+        }
       }
-    } else if (value == '}' || value == ']') {
-      if (level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
-      }
-      level--;
-    } else if (value == ':' || value == ',') {
-      if (level >= 0 && level < numLevels) {
-        leveledBitmapsIndex[levelSize * level + i / 64] |=
-            (1L << offsetInBlock);
-      }
     }
+    __syncwarp();
   }
 }
 

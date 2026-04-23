@@ -6,8 +6,8 @@ type = "MMAP"
 
 [index_builder]
 type = "COMBINED"
-grid_size = 16384
-block_size = 512
+grid_size = 128
+block_size = 256
 reduction_grid_size = 32
 reduction_block_size = 32
 
