@@ -1,10 +1,5 @@
 namespace gpjson::index::kernels::sharemem {
 
-constexpr int BYTES_PER_THREAD = 32;
-constexpr int BYTES_PER_THREAD_BLOCK = 16384;
-constexpr int NUM_THREADS_PER_BLOCK =
-    (BYTES_PER_THREAD_BLOCK / BYTES_PER_THREAD);
-
 __global__ void newline_count_index(const char *file, int fileSize,
                                     int *newlineCountIndex);
 
