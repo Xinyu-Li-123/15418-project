@@ -10,6 +10,16 @@ CompileFlags:
     - --options-file
     - --compiler-options
     - -Xcompiler
-  Add:
-    - --cuda-path=/usr/local/cuda
-    - --cuda-gpu-arch=sm_75
+  Add: [
+    --cuda-path=/usr/local/cuda,
+    --cuda-gpu-arch=sm_75,
+    -I/usr/include/c++/13,
+    -I/usr/include/x86_64-linux-gnu/c++/13,
+    -I/usr/include/c++/13/backward,
+    -I/usr/lib/gcc/x86_64-linux-gnu/13/include,
+    -I/usr/local/include,
+    -I/usr/include/x86_64-linux-gnu,
+    -I/usr/include,
+    -I/afs/andrew.cmu.edu/usr13/xinyuli4/private/15418/asst4/codebase/code
+  ]
+
