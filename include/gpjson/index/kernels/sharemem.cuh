@@ -31,6 +31,9 @@ __global__ void escape_carry_index(const char *file, int fileSize,
 __global__ void escape_index(const char *file, long fileSize,
                              char *escapeCarryIndex, long *escapeIndex);
 
+__global__ void escape_index_sharemem(const char *file, long fileSize,
+                                      long *escapeIndex);
+
 __global__ void quote_index(const char *file, int fileSize, long *escapeIndex,
                             long *quoteIndex, char *quoteCarryIndex);
 
