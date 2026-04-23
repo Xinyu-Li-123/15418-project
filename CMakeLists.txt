@@ -60,7 +60,7 @@ endif()
 target_compile_options(gpjson-cpp_lib
   PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wpedantic>
-    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr -lineinfo>
 )
 
 set_target_properties(gpjson-cpp_lib PROPERTIES
