@@ -49,7 +49,7 @@ __global__ void string_index(long *string_index, int string_index_size,
 
     quotes ^= bit_string;
     string_index_u64[word] = quotes;
-    bit_string = quotes >> 63;
+    bit_string = ((quotes >> 63) != 0ull) ? 0xffffffffffffffffull : 0ull;
   }
 }
 
