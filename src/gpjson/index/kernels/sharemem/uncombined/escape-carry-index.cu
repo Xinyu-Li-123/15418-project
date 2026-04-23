@@ -85,7 +85,6 @@ __global__ void escape_carry_index(const char *file, int fileSize,
     int word_start = local_start / packed_bytes;
     int word_end = local_end / packed_bytes;
 
-    char carry = 0;
     bool done = false;
 
     for (int w = word_end - 1; w >= word_start && !done; --w) {
