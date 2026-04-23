@@ -11,7 +11,7 @@
 
 namespace gpjson::index {
 
-enum class IndexBuilderType { UNCOMBINED = 0, COMBINED, FUSED };
+enum class IndexBuilderType { UNCOMBINED = 0, COMBINED, FUSED, SHAREMEM };
 
 inline std::ostream &operator<<(std::ostream &os, IndexBuilderType type) {
   switch (type) {
@@ -21,6 +21,8 @@ inline std::ostream &operator<<(std::ostream &os, IndexBuilderType type) {
     return os << "COMBINED";
   case IndexBuilderType::FUSED:
     return os << "FUSED";
+  case IndexBuilderType::SHAREMEM:
+    return os << "SHAREMEM";
   default:
     return os << "UNKNOWN("
               << static_cast<std::underlying_type_t<IndexBuilderType>>(type)
@@ -83,6 +85,17 @@ private:
 class FusedIndexBuilder final : public IndexBuilder {
 public:
   explicit FusedIndexBuilder(const file::FileReader &file_reader);
+
+  BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
+                     const IndexBuilderOptions &options) const override;
+
+private:
+  const file::FileReader &file_reader_;
+};
+
+class SharememIndexBuilder final : public IndexBuilder {
+public:
+  explicit SharememIndexBuilder(const file::FileReader &file_reader);
 
   BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
                      const IndexBuilderOptions &options) const override;

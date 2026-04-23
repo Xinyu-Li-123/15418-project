@@ -42,6 +42,9 @@ create_index_builder(const file::FileReader &file_reader,
   case index::IndexBuilderType::FUSED:
     return std::make_unique<index::FusedIndexBuilder>(file_reader);
 
+  case index::IndexBuilderType::SHAREMEM:
+    return std::make_unique<index::SharememIndexBuilder>(file_reader);
+
   default:
     throw error::common::ImplementationError("Undefined index builder type.");
   }
