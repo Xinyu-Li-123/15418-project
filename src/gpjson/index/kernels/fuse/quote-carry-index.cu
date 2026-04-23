@@ -28,8 +28,32 @@ quote_carry_index_using_escape_carry_index(const char *file, int fileSize,
 
   int quoteCount = 0;
 
+  // char carry = 0;
+  //
+  // __shared__ char tb_escape_carry_index[512];
+  //
+  // for (int i = start; i < end && i < fileSize; i += 1) {
+  //   if (file[i] == '\\') {
+  //     carry = 1 ^ carry;
+  //   } else {
+  //     carry = 0;
+  //   }
+  // }
+  //
+  // tb_escape_carry_index[threadIdx.x] = carry;
+  //
+  // __syncthreads();
+  //
   // escapeCarryIndex[index-1] tells if first char in the chunk assigned to
   // thread index is escaped
+  // TODO: Pre-compute a thread-block-level escape carry index, which only need
+  // to read 512 less times of file cmp to original escape carry index
+  // TODO: Read file chunk into shared memory like in
+  // gpjson::index::kernels::sharemem. This can both reduce uncoalesced global
+  // read and reduce file pass by 1
+  // char is_cur_escaped =
+  //     threadIdx.x == 0 ? 0 : tb_escape_carry_index[threadIdx.x - 1];
+
   char is_cur_escaped = index == 0 ? 0 : escapeCarryIndex[index - 1];
 
   for (long i = start; i < end && i < fileSize; i += 1) {
