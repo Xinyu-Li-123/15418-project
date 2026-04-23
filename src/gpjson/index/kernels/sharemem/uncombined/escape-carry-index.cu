@@ -31,8 +31,8 @@ __global__ void escape_carry_index(const char *file, int fileSize,
   // to chunk start, and imemdaitely decide carry flag value if encounter
   // non-consecutive backslash
 
-  const bool READ_BACKWARD = false;
-  // const bool READ_BACKWARD = true;
+  // const bool READ_BACKWARD = false;
+  const bool READ_BACKWARD = true;
 
   char carry = 0;
   if (!READ_BACKWARD) {
