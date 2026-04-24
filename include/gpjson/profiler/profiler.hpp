@@ -35,10 +35,10 @@ public:
 
   SegmentId begin(std::string_view name);
   SegmentId beginf(const char *fmt, ...);
+  SegmentId begin_nested(std::string_view name);
+  SegmentId begin_nestedf(const char *fmt, ...);
 
   void end(SegmentId segment_id);
-  void indent();
-  void unindent();
 
 private:
   using Clock = std::chrono::steady_clock;
@@ -50,10 +50,13 @@ private:
     TimePoint start_time{};
     Duration elapsed{Duration::zero()};
     size_t indent_level{0};
+    bool opens_indent_scope{false};
     bool completed{false};
   };
 
-  SegmentId begin_formatted(const char *fmt, va_list args);
+  SegmentId begin_with_scope(std::string_view name, bool opens_indent_scope);
+  SegmentId begin_formatted(const char *fmt, va_list args,
+                            bool opens_indent_scope);
   std::string vformat(const char *fmt, va_list args) const;
 
   std::string name_;

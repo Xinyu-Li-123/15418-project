@@ -130,8 +130,7 @@ Engine::query(const std::string &file_path,
 
   for (auto &partition : file_reader->get_partitions()) {
     const profiler::Profiler::SegmentId partition_total_timer =
-        profiler.beginf("partition %zu total", partition.partition_id());
-    profiler.indent();
+        profiler.begin_nestedf("partition %zu total", partition.partition_id());
     const profiler::Profiler::SegmentId load_to_device_timer = profiler.beginf(
         "partition %zu load_to_device", partition.partition_id());
     partition.load_to_device();
@@ -160,7 +159,6 @@ Engine::query(const std::string &file_path,
     profiler.end(materialize_results_timer);
 
     append_partition_results(merged_queries, partition_result);
-    profiler.unindent();
     profiler.end(partition_total_timer);
   }
 

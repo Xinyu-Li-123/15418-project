@@ -217,8 +217,7 @@ create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
                                            profiler::Profiler &profiler) {
   LogInfo("Create newline and string index, combined=0");
   const profiler::Profiler::SegmentId total_timer =
-      profiler.begin("create_newline_and_string_index");
-  profiler.indent();
+      profiler.begin_nested("create_newline_and_string_index");
 
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
@@ -229,8 +228,7 @@ create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
                                              sizeof(int));
 
   const profiler::Profiler::SegmentId newline_related_timer =
-      profiler.begin("newline_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("newline_index related kernels");
 
   const profiler::Profiler::SegmentId newline_count_timer =
       profiler.begin("newline_count_index");
@@ -258,14 +256,11 @@ create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
       newline_index_mem.as<long>());
   cuda::synchronize_and_check();
   profiler.end(newline_index_timer);
-
-  profiler.unindent();
   profiler.end(newline_related_timer);
 
   cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
   const profiler::Profiler::SegmentId string_related_timer =
-      profiler.begin("string_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("string_index related kernels");
 
   const profiler::Profiler::SegmentId escape_carry_timer =
       profiler.begin("escape_carry_index");
@@ -284,14 +279,10 @@ create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
 
   create_string_index_from_escape_index(ctx, escape_index_mem, string_index_mem,
                                         string_carry_index_mem, profiler);
-
-  profiler.unindent();
   profiler.end(string_related_timer);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
-
-  profiler.unindent();
   profiler.end(total_timer);
   return {std::move(newline_index), std::move(string_index)};
 }
@@ -301,8 +292,7 @@ create_combined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
                                          profiler::Profiler &profiler) {
   LogInfo("Create newline and string index, combined=1");
   const profiler::Profiler::SegmentId total_timer =
-      profiler.begin("create_newline_and_string_index");
-  profiler.indent();
+      profiler.begin_nested("create_newline_and_string_index");
 
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
@@ -314,8 +304,7 @@ create_combined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
   cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
 
   const profiler::Profiler::SegmentId newline_related_timer =
-      profiler.begin("newline_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("newline_index related kernels");
 
   const profiler::Profiler::SegmentId combined_count_timer =
       profiler.begin("combined_escape_carry_newline_count_index");
@@ -346,24 +335,17 @@ create_combined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
           newline_index_mem.as<long>());
   cuda::synchronize_and_check();
   profiler.end(combined_index_timer);
-
-  profiler.unindent();
   profiler.end(newline_related_timer);
 
   const profiler::Profiler::SegmentId string_related_timer =
-      profiler.begin("string_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("string_index related kernels");
 
   create_string_index_from_escape_index(ctx, escape_index_mem, string_index_mem,
                                         string_carry_index_mem, profiler);
-
-  profiler.unindent();
   profiler.end(string_related_timer);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
-
-  profiler.unindent();
   profiler.end(total_timer);
   return {std::move(newline_index), std::move(string_index)};
 }
@@ -374,12 +356,10 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
                             profiler::Profiler &profiler) {
   LogInfo("Create leveled bitmap index");
   const profiler::Profiler::SegmentId total_timer =
-      profiler.begin("create_leveled_bitmap_index");
-  profiler.indent();
+      profiler.begin_nested("create_leveled_bitmap_index");
 
   const profiler::Profiler::SegmentId leveled_bitmap_related_timer =
-      profiler.begin("leveled_bitmap related kernels");
-  profiler.indent();
+      profiler.begin_nested("leveled_bitmap related kernels");
 
   cuda::DeviceArray carry_index_mem(ctx.num_cuda_threads() * sizeof(char));
   const profiler::Profiler::SegmentId carry_index_timer =
@@ -410,10 +390,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
       leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth);
   cuda::synchronize_and_check();
   profiler.end(leveled_bitmaps_index_timer);
-
-  profiler.unindent();
   profiler.end(leveled_bitmap_related_timer);
-  profiler.unindent();
   profiler.end(total_timer);
   return LeveledBitmapIndex(std::move(leveled_bitmap_index_mem), ctx.max_depth);
 }
@@ -434,15 +411,14 @@ UncombinedIndexBuilder::build(const file::FilePartition &partition,
                               const IndexBuilderOptions &options) const {
   LogInfo("Build uncombined index builder.");
   profiler::Profiler profiler("UncombinedIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer = profiler.begin("build");
-  profiler.indent();
+  const profiler::Profiler::SegmentId build_timer =
+      profiler.begin_nested("build");
   const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_uncombined_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.unindent();
   profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
@@ -459,15 +435,14 @@ CombinedIndexBuilder::build(const file::FilePartition &partition,
                             const IndexBuilderOptions &options) const {
   LogInfo("Build uncombined index builder.");
   profiler::Profiler profiler("CombinedIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer = profiler.begin("build");
-  profiler.indent();
+  const profiler::Profiler::SegmentId build_timer =
+      profiler.begin_nested("build");
   const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_combined_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.unindent();
   profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};

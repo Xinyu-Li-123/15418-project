@@ -189,8 +189,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
                                 profiler::Profiler &profiler) {
   LogInfo("Create newline and string index");
   const profiler::Profiler::SegmentId total_timer =
-      profiler.begin("create_newline_and_string_index");
-  profiler.indent();
+      profiler.begin_nested("create_newline_and_string_index");
 
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
@@ -202,8 +201,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   //     per_tile_newline_offset_index_mem.as<int>() + 1;
 
   const profiler::Profiler::SegmentId total_newline_index_timer =
-      profiler.begin("newline_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("newline_index related kernels");
 
   // NOTE: We compute per-tile newline count instead of per-thread newline count
   // mainly because this will save us 256x less global write. Per-thread newline
@@ -243,14 +241,12 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
       per_tile_newline_count_index_mem.as<int>(), newline_index_mem.as<long>());
   cuda::synchronize_and_check();
   profiler.end(newline_index_timer);
-  profiler.unindent();
   profiler.end(total_newline_index_timer);
 
   cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
 
   const profiler::Profiler::SegmentId total_string_index_related =
-      profiler.begin("string_index related kernels");
-  profiler.indent();
+      profiler.begin_nested("string_index related kernels");
 
   const profiler::Profiler::SegmentId escape_carry_timer =
       profiler.begin("escape_carry_index");
@@ -269,14 +265,10 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
 
   create_string_index_from_escape_index(ctx, escape_index_mem, string_index_mem,
                                         string_carry_index_mem, profiler);
-
-  profiler.unindent();
   profiler.end(total_string_index_related);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
-
-  profiler.unindent();
   profiler.end(total_timer);
   return {std::move(newline_index), std::move(string_index)};
 }
@@ -287,12 +279,10 @@ create_leveled_bitmap_index(const SharememIndexBuilderContext &ctx,
                             profiler::Profiler &profiler) {
   LogInfo("Create leveled bitmap index");
   const profiler::Profiler::SegmentId total_timer =
-      profiler.begin("create_leveled_bitmap_index");
-  profiler.indent();
+      profiler.begin_nested("create_leveled_bitmap_index");
 
   const profiler::Profiler::SegmentId leveled_bitmap_related_timer =
-      profiler.begin("leveled_bitmap related kernels");
-  profiler.indent();
+      profiler.begin_nested("leveled_bitmap related kernels");
 
   cuda::DeviceArray carry_index_mem(ctx.num_cuda_threads() * sizeof(char));
   const profiler::Profiler::SegmentId carry_index_timer =
@@ -324,10 +314,7 @@ create_leveled_bitmap_index(const SharememIndexBuilderContext &ctx,
       leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth);
   cuda::synchronize_and_check();
   profiler.end(leveled_bitmaps_index_timer);
-
-  profiler.unindent();
   profiler.end(leveled_bitmap_related_timer);
-  profiler.unindent();
   profiler.end(total_timer);
   return LeveledBitmapIndex(std::move(leveled_bitmap_index_mem), ctx.max_depth);
 }
@@ -347,15 +334,14 @@ SharememIndexBuilder::build(const file::FilePartition &partition,
                             const IndexBuilderOptions &options) const {
   LogInfo("Build sharemem index builder.");
   profiler::Profiler profiler("SharememIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer = profiler.begin("build");
-  profiler.indent();
+  const profiler::Profiler::SegmentId build_timer =
+      profiler.begin_nested("build");
   const SharememIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.unindent();
   profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
