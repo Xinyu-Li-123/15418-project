@@ -104,8 +104,6 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
                                            sizeof(char));
-  // TODO: 1 extra slot in the beginning, and used full array as offset array,
-  // and [1:] as newline count array
   // 1 extra slot in the end to store number of newlines w/ exclusive scan
   cuda::DeviceArray per_tile_newline_count_index_mem((ctx.grid_size + 1) *
                                                      sizeof(int));
@@ -114,6 +112,9 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
 
   const int scan_stride = reduction_scan_stride(ctx);
 
+  // NOTE: We compute per-tile newline count instead of per-thread newline count
+  // mainly because this will save us 256x less global write. Per-thread newline
+  // count can be computed on-the-fly.
   const profiler::Profiler::SegmentId newline_count_timer =
       profiler.begin("    newline_count_index");
   kernels::sharemem::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
@@ -122,10 +123,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::synchronize_and_check();
   profiler.end(newline_count_timer);
 
-  // TODO: newline_count_index is now per-tile newline count, an in-place
-  // exclusive prefix sum should give us both newline offset and number of
-  // newlines
-
+  // Use exclusive scan to get newline offset index
   const profiler::Profiler::SegmentId newline_index_offset =
       profiler.begin("    newline_index_offset");
   thrust::exclusive_scan(
@@ -135,47 +133,13 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::synchronize_and_check();
   profiler.end(newline_index_offset);
 
-  // cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
-  //                                    ctx.reduction_block_size * sizeof(int));
-  // const profiler::Profiler::SegmentId int_sum_pre_scan_timer =
-  //     profiler.begin("    int_sum_pre_scan");
-  // kernels::sharemem::
-  //     int_sum_pre_scan<<<ctx.reduction_grid_size,
-  //     ctx.reduction_block_size>>>(
-  //         per_tile_newline_count_index_mem.as<int>(), ctx.grid_size);
-  // cuda::synchronize_and_check();
-  // profiler.end(int_sum_pre_scan_timer);
-  //
-  // const profiler::Profiler::SegmentId int_sum_post_scan_timer =
-  //     profiler.begin("    int_sum_post_scan");
-  // kernels::sharemem::int_sum_post_scan<<<1, 1>>>(
-  //     per_tile_newline_count_index_mem.as<int>(), ctx.grid_size, scan_stride,
-  //     1, int_sum_base_mem.as<int>());
-  // cuda::synchronize_and_check();
-  // profiler.end(int_sum_post_scan_timer);
-  //
-  // const profiler::Profiler::SegmentId int_sum_rebase_timer =
-  //     profiler.begin("    int_sum_rebase");
-  // kernels::sharemem::
-  //     int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
-  //         per_tile_newline_count_index_mem.as<int>(), ctx.grid_size,
-  //         int_sum_base_mem.as<int>(), 1, newline_index_offset_mem.as<int>());
-  // cuda::synchronize_and_check();
-  // profiler.end(int_sum_rebase_timer);
-
-  // copy_scalar_to_device<int>(newline_index_offset_mem, 0, 1);
-
-  // exclusive prefix sum will store sum num newline at end of array
+  // exclusive prefix sum will store total num newline at end of array
   const int num_lines = copy_scalar_from_device<int>(
       per_tile_newline_count_index_mem, ctx.grid_size);
-  // const int num_lines = 30;
   LogInfo("num_lines: %d", num_lines);
-  Assert(num_lines == 310978,
-         "Number of newline is incorrect. Expect 310978, got %d", num_lines);
+  // Assert(num_lines == 310978,
+  //        "Number of newline is incorrect. Expect 310978, got %d", num_lines);
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
-  // // Slot 0 is the synthetic start offset for the first line; kernels append
-  // // discovered newline offsets starting at slot 1.
-  // copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
 
   const profiler::Profiler::SegmentId newline_index_timer =
       profiler.begin("    newline_index");

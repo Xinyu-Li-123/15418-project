@@ -140,7 +140,7 @@ inline gpjson::index::IndexBuilderOptions
 small_builder_options(gpjson::index::IndexBuilderType builder_type =
                           gpjson::index::IndexBuilderType::UNCOMBINED) {
   return gpjson::index::IndexBuilderOptions{
-      builder_type, 0, 1, 64, 1, 64,
+      builder_type, 0, 1, 512, 1, 64,
   };
 }
 

@@ -122,9 +122,9 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
   Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
         THREADS_PER_BLOCK);
 
-  int tid = threadIdx.x;
-  int tile_idx = blockIdx.x;
-  int block_start = tile_idx * CHUNK_SIZE;
+  const int tid = threadIdx.x;
+  const int tile_idx = blockIdx.x;
+  const int block_start = tile_idx * CHUNK_SIZE;
   int count = 0;
 
   // each thread read BYTES_PER_THREAD bytes, count newline, and write
@@ -141,17 +141,17 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
   int in_thread_count = 0;
   // Each thread reads `packed_bytes_gmem` bytes at a time
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    int global_byte_idx = block_start + p * packed_bytes_gmem;
-    int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
+    const int global_byte_idx = block_start + p * packed_bytes_gmem;
+    const int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
     if (global_byte_idx >= fileSize) {
       break;
     }
-    uint2 packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    const uint2 packed_bytes = file_packed_gmem[global_packed_byte_idx];
     const char *packed_chars = reinterpret_cast<const char *>(&packed_bytes);
 #pragma unroll
     for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
-      int global_idx = global_byte_idx + local_idx;
-      char curChar = packed_chars[local_idx];
+      const int global_idx = global_byte_idx + local_idx;
+      const char curChar = packed_chars[local_idx];
       if (global_idx < fileSize && curChar == '\n') {
         in_thread_count += 1;
       }
@@ -162,9 +162,6 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
   __syncthreads();
 
   // reduce on in_tile_counts to get per-tile newline count.
-
-  // TODO: Optimize this with warp-level reduction (sum within warp w/
-  // __shfl_down_sync w/o share mem access)
   for (int pass_bound = (THREADS_PER_BLOCK >> 1); pass_bound > 0;
        pass_bound >>= 1) {
     if (tid < pass_bound) {
