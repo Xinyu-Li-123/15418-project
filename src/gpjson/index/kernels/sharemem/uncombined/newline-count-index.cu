@@ -11,7 +11,7 @@ namespace gpjson::index::kernels::sharemem {
  *
  */
 __global__ void newline_count_index(const char *file, int fileSize,
-                                    int *newlineCountIndex) {
+                                    int *perTileNewlineCountIndex) {
   // REQUIRES: gridDim.x * blockDim.x * 64 >= file partition size
   // REQUIRES: length of newlineCountIndex == gridDim.x, i.e. we count the num
   // of newline for each tile
@@ -63,7 +63,7 @@ __global__ void newline_count_index(const char *file, int fileSize,
   }
 
   if (tid == 0) {
-    newlineCountIndex[tile_idx] = in_tile_counts[0];
+    perTileNewlineCountIndex[tile_idx] = in_tile_counts[0];
   }
 
   // if (tid == 0) {
