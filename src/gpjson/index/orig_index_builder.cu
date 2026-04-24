@@ -111,21 +111,21 @@ create_newline_and_string_index(bool combined,
         ctx.grid_size, ctx.block_size>>>(ctx.device_file(), ctx.file_size,
                                          string_carry_index_mem.as<char>(),
                                          newline_count_index_mem.as<int>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(kernel_timer);
   } else {
     const profiler::Profiler::SegmentId newline_count_timer =
         profiler.begin("    newline_count_index");
     kernels::orig::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(newline_count_timer);
 
     const profiler::Profiler::SegmentId escape_carry_timer =
         profiler.begin("    escape_carry_index");
     kernels::orig::escape_carry_index<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(escape_carry_timer);
   }
 
@@ -137,7 +137,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::
       int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(int_sum_pre_scan_timer);
 
   const profiler::Profiler::SegmentId int_sum_post_scan_timer =
@@ -145,7 +145,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::int_sum_post_scan<<<1, 1>>>(
       newline_count_index_mem.as<int>(), ctx.num_cuda_threads(), scan_stride, 1,
       int_sum_base_mem.as<int>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(int_sum_post_scan_timer);
 
   const profiler::Profiler::SegmentId int_sum_rebase_timer =
@@ -154,7 +154,7 @@ create_newline_and_string_index(bool combined,
       int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
           int_sum_base_mem.as<int>(), 1, newline_index_offset_mem.as<int>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(int_sum_rebase_timer);
 
   copy_scalar_to_device<int>(newline_index_offset_mem, 0, 1);
@@ -176,7 +176,7 @@ create_newline_and_string_index(bool combined,
             ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
             newline_index_offset_mem.as<int>(), escape_index_mem.as<long>(),
             newline_index_mem.as<long>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(kernel_timer);
   } else {
     const profiler::Profiler::SegmentId escape_index_timer =
@@ -184,7 +184,7 @@ create_newline_and_string_index(bool combined,
     kernels::orig::escape_index<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
         escape_index_mem.as<long>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(escape_index_timer);
 
     const profiler::Profiler::SegmentId newline_index_timer =
@@ -192,7 +192,7 @@ create_newline_and_string_index(bool combined,
     kernels::orig::newline_index<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_file(), ctx.file_size, newline_index_offset_mem.as<int>(),
         newline_index_mem.as<long>());
-    cuda::synchronize();
+    cuda::synchronize_and_check();
     profiler.end(newline_index_timer);
   }
 
@@ -201,7 +201,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::quote_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, escape_index_mem.as<long>(),
       string_index_mem.as<long>(), string_carry_index_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(quote_index_timer);
 
   cuda::DeviceArray xor_base_mem(ctx.reduction_grid_size *
@@ -211,7 +211,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::
       xor_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(xor_pre_scan_timer);
 
   const profiler::Profiler::SegmentId xor_post_scan_timer =
@@ -219,7 +219,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::xor_post_scan<<<1, 1>>>(string_carry_index_mem.as<char>(),
                                          ctx.num_cuda_threads(), scan_stride,
                                          xor_base_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(xor_post_scan_timer);
 
   const profiler::Profiler::SegmentId xor_rebase_timer =
@@ -228,7 +228,7 @@ create_newline_and_string_index(bool combined,
       xor_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
           xor_base_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(xor_rebase_timer);
 
   const profiler::Profiler::SegmentId string_index_timer =
@@ -236,7 +236,7 @@ create_newline_and_string_index(bool combined,
   kernels::orig::string_index<<<ctx.grid_size, ctx.block_size>>>(
       string_index_mem.as<long>(), ctx.level_size(),
       string_carry_index_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(string_index_timer);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
@@ -260,7 +260,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
       ctx.device_file(), ctx.file_size,
       static_cast<const long *>(string_index.data()),
       carry_index_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(carry_index_timer);
 
   cuda::DeviceArray carry_index_with_offset_mem((ctx.num_cuda_threads() + 1) *
@@ -275,7 +275,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
   kernels::orig::
       char_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           carry_index_mem.as<char>(), ctx.num_cuda_threads());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(char_sum_pre_scan_timer);
 
   const profiler::Profiler::SegmentId char_sum_post_scan_timer =
@@ -283,7 +283,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
   kernels::orig::char_sum_post_scan<<<1, 1>>>(
       carry_index_mem.as<char>(), ctx.num_cuda_threads(), scan_stride,
       static_cast<char>(-1), char_sum_base_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(char_sum_post_scan_timer);
 
   const profiler::Profiler::SegmentId char_sum_rebase_timer =
@@ -293,7 +293,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
           carry_index_mem.as<char>(), ctx.num_cuda_threads(),
           char_sum_base_mem.as<char>(), 1,
           carry_index_with_offset_mem.as<char>());
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(char_sum_rebase_timer);
 
   cuda::DeviceArray leveled_bitmap_index_mem(ctx.level_size() * ctx.max_depth *
@@ -306,7 +306,7 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
       static_cast<const long *>(string_index.data()),
       carry_index_with_offset_mem.as<char>(),
       leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth);
-  cuda::synchronize();
+  cuda::synchronize_and_check();
   profiler.end(leveled_bitmaps_index_timer);
 
   profiler.end(total_timer);

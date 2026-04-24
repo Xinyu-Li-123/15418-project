@@ -104,7 +104,7 @@ TEST_P(LeveledBitmapIndexBuilderTest, BuildsLeveledBitmapIndex) {
   gpjson::index::BuiltIndices indices =
       builder->build(partition.view(), gpjson::test::index::kMaxDepth,
                      gpjson::test::index::small_builder_options(builder_type));
-  gpjson::cuda::synchronize();
+  gpjson::cuda::synchronize_and_check();
 
   const std::vector<long> expected = expected_leveled_bitmap_index(
       partition.data(), gpjson::test::index::kMaxDepth);
