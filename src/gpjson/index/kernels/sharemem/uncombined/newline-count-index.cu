@@ -27,7 +27,6 @@ __global__ void newline_count_index(const char *file, int fileSize,
   int tid = threadIdx.x;
   int tile_idx = blockIdx.x;
   int block_start = tile_idx * CHUNK_SIZE;
-  int count = 0;
 
   // each thread read BYTES_PER_THREAD bytes, count newline, and write
   // per-thread count to a shared memory array in_tile_counts.
@@ -36,15 +35,27 @@ __global__ void newline_count_index(const char *file, int fileSize,
   // Note that the BYTES_PER_THREAD bytes assigned to each thread is not
   // continguous bytes. This is to allow coalesced global read from file
   // partition.
-  // TODO: Read packed bytes
+  constexpr int packed_bytes_gmem = 8;
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+  constexpr int packed_elems_per_block = CHUNK_SIZE / packed_bytes_gmem;
+
   int in_thread_count = 0;
-  for (int p = tid; p < CHUNK_SIZE; p += blockDim.x) {
-    int global_byte_idx = block_start + p;
+  // Each thread reads `packed_bytes_gmem` bytes at a time
+  for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
+    int global_byte_idx = block_start + p * packed_bytes_gmem;
+    int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
     if (global_byte_idx >= fileSize) {
       break;
     }
-    if (file[global_byte_idx] == '\n') {
-      in_thread_count += 1;
+    uint2 packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    const char *packed_chars = reinterpret_cast<const char *>(&packed_bytes);
+#pragma unroll
+    for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
+      int global_idx = global_byte_idx + local_idx;
+      char curChar = packed_chars[local_idx];
+      if (global_idx < fileSize && curChar == '\n') {
+        in_thread_count += 1;
+      }
     }
   }
   in_tile_counts[tid] = in_thread_count;
@@ -77,9 +88,9 @@ __global__ void newline_count_index(const char *file, int fileSize,
   //       expected_count += 1;
   //     }
   //   }
-  //   Check(expected_count == newlineCountIndex[tile_idx],
+  //   Check(expected_count == perTileNewlineCountIndex[tile_idx],
   //         "Incorrect per-tile newline count. Expect %d, got %d.",
-  //         expected_count, newlineCountIndex[tile_idx]);
+  //         expected_count, perTileNewlineCountIndex[tile_idx]);
   // }
 }
 } // namespace gpjson::index::kernels::sharemem
