@@ -136,7 +136,7 @@ __global__ void newline_index(const char *file, int fileSize,
       const int global_idx = global_start_idx + local_idx;
       const char curFlag = packed_flags[local_idx];
       if (global_idx < fileSize && curFlag) {
-        newlineIndex[global_offset] = global_idx;
+        newlineIndex[global_offset + 1] = global_idx;
         global_offset += 1;
       }
     }

@@ -133,13 +133,15 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::synchronize_and_check();
   profiler.end(newline_index_offset);
 
-  // exclusive prefix sum will store total num newline at end of array
-  const int num_lines = copy_scalar_from_device<int>(
+  // exclusive prefix sum stores the number of physical newline characters.
+  const int num_newline_chars = copy_scalar_from_device<int>(
       per_tile_newline_count_index_mem, ctx.grid_size);
+  const int num_lines = num_newline_chars + 1;
   LogInfo("num_lines: %d", num_lines);
   // Assert(num_lines == 310978,
   //        "Number of newline is incorrect. Expect 310978, got %d", num_lines);
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
+  copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
 
   const profiler::Profiler::SegmentId newline_index_timer =
       profiler.begin("    newline_index");
