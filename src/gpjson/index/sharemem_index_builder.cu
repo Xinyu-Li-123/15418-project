@@ -132,6 +132,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
       thrust::device, per_tile_newline_count_index_mem.as<int>(),
       per_tile_newline_count_index_mem.as<int>() + ctx.grid_size + 1,
       per_tile_newline_count_index_mem.as<int>());
+  cuda::synchronize_and_check();
   profiler.end(newline_index_offset);
 
   // cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
@@ -169,6 +170,8 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
       per_tile_newline_count_index_mem, ctx.grid_size);
   // const int num_lines = 30;
   LogInfo("num_lines: %d", num_lines);
+  Assert(num_lines == 310978,
+         "Number of newline is incorrect. Expect 310978, got %d", num_lines);
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
   // // Slot 0 is the synthetic start offset for the first line; kernels append
   // // discovered newline offsets starting at slot 1.
