@@ -102,10 +102,8 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
                                            sizeof(char));
-  cuda::DeviceArray newline_count_index_mem(ctx.num_cuda_threads() *
-                                            sizeof(int));
-  cuda::DeviceArray newline_index_offset_mem((ctx.num_cuda_threads() + 1) *
-                                             sizeof(int));
+  cuda::DeviceArray newline_count_index_mem(ctx.grid_size * sizeof(int));
+  cuda::DeviceArray newline_index_offset_mem((ctx.grid_size + 1) * sizeof(int));
 
   const profiler::Profiler::SegmentId newline_count_timer =
       profiler.begin("    newline_count_index");
@@ -128,14 +126,14 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
       profiler.begin("    int_sum_pre_scan");
   kernels::sharemem::
       int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
-          newline_count_index_mem.as<int>(), ctx.num_cuda_threads());
+          newline_count_index_mem.as<int>(), ctx.grid_size);
   cuda::synchronize();
   profiler.end(int_sum_pre_scan_timer);
 
   const profiler::Profiler::SegmentId int_sum_post_scan_timer =
       profiler.begin("    int_sum_post_scan");
   kernels::sharemem::int_sum_post_scan<<<1, 1>>>(
-      newline_count_index_mem.as<int>(), ctx.num_cuda_threads(), scan_stride, 1,
+      newline_count_index_mem.as<int>(), ctx.grid_size, scan_stride, 1,
       int_sum_base_mem.as<int>());
   cuda::synchronize();
   profiler.end(int_sum_post_scan_timer);
@@ -144,7 +142,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
       profiler.begin("    int_sum_rebase");
   kernels::sharemem::
       int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
-          newline_count_index_mem.as<int>(), ctx.num_cuda_threads(),
+          newline_count_index_mem.as<int>(), ctx.grid_size,
           int_sum_base_mem.as<int>(), 1, newline_index_offset_mem.as<int>());
   cuda::synchronize();
   profiler.end(int_sum_rebase_timer);
@@ -152,6 +150,9 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   copy_scalar_to_device<int>(newline_index_offset_mem, 0, 1);
   const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
                                                      ctx.num_cuda_threads());
+  LogInfo("num_lines: %d", num_lines);
+  Assert(num_lines == 310979,
+         "Incorrect number of num_lines. Expect 310979, got %d", num_lines);
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
   // Slot 0 is the synthetic start offset for the first line; kernels append
   // discovered newline offsets starting at slot 1.

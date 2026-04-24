@@ -160,6 +160,7 @@ create_newline_and_string_index(bool combined,
   copy_scalar_to_device<int>(newline_index_offset_mem, 0, 1);
   const int num_lines = copy_scalar_from_device<int>(newline_index_offset_mem,
                                                      ctx.num_cuda_threads());
+  LogInfo("num_lines: %d", num_lines);
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
   // Slot 0 is the synthetic start offset for the first line; kernels append
   // discovered newline offsets starting at slot 1.
