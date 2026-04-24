@@ -112,11 +112,13 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
 
   const int scan_stride = reduction_scan_stride(ctx);
 
+  const profiler::Profiler::SegmentId total_newline_index_timer =
+      profiler.begin("    newline_index related kernels");
   // NOTE: We compute per-tile newline count instead of per-thread newline count
   // mainly because this will save us 256x less global write. Per-thread newline
   // count can be computed on-the-fly.
   const profiler::Profiler::SegmentId newline_count_timer =
-      profiler.begin("    newline_count_index");
+      profiler.begin("        newline_count_index");
   kernels::sharemem::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size,
       per_tile_newline_count_index_mem.as<int>());
@@ -125,7 +127,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
 
   // Use exclusive scan to get newline offset index
   const profiler::Profiler::SegmentId newline_index_offset =
-      profiler.begin("    newline_index_offset");
+      profiler.begin("        newline_index_offset");
   thrust::exclusive_scan(
       thrust::device, per_tile_newline_count_index_mem.as<int>(),
       per_tile_newline_count_index_mem.as<int>() + ctx.grid_size + 1,
@@ -144,24 +146,27 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
 
   const profiler::Profiler::SegmentId newline_index_timer =
-      profiler.begin("    newline_index");
+      profiler.begin("        newline_index");
   kernels::sharemem::newline_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size,
       per_tile_newline_count_index_mem.as<int>(), newline_index_mem.as<long>());
   cuda::synchronize_and_check();
   profiler.end(newline_index_timer);
+  profiler.end(total_newline_index_timer);
 
   cuda::DeviceArray escape_index_mem(ctx.level_size() * sizeof(long));
 
+  const profiler::Profiler::SegmentId total_string_index_related =
+      profiler.begin("    string_index related kernels");
   const profiler::Profiler::SegmentId escape_carry_timer =
-      profiler.begin("    escape_carry_index");
+      profiler.begin("        escape_carry_index");
   kernels::sharemem::escape_carry_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>());
   cuda::synchronize_and_check();
   profiler.end(escape_carry_timer);
 
   const profiler::Profiler::SegmentId escape_index_timer =
-      profiler.begin("    escape_index");
+      profiler.begin("        escape_index");
   kernels::sharemem::escape_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, string_carry_index_mem.as<char>(),
       escape_index_mem.as<long>());
@@ -169,7 +174,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   profiler.end(escape_index_timer);
 
   const profiler::Profiler::SegmentId quote_index_timer =
-      profiler.begin("    quote_index");
+      profiler.begin("        quote_index");
   kernels::sharemem::quote_index<<<ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, escape_index_mem.as<long>(),
       string_index_mem.as<long>(), string_carry_index_mem.as<char>());
@@ -179,7 +184,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::DeviceArray xor_base_mem(ctx.reduction_grid_size *
                                  ctx.reduction_block_size * sizeof(char));
   const profiler::Profiler::SegmentId xor_pre_scan_timer =
-      profiler.begin("    xor_pre_scan");
+      profiler.begin("        xor_pre_scan");
   kernels::sharemem::
       xor_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads());
@@ -187,7 +192,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   profiler.end(xor_pre_scan_timer);
 
   const profiler::Profiler::SegmentId xor_post_scan_timer =
-      profiler.begin("    xor_post_scan");
+      profiler.begin("        xor_post_scan");
   kernels::sharemem::xor_post_scan<<<1, 1>>>(
       string_carry_index_mem.as<char>(), ctx.num_cuda_threads(), scan_stride,
       xor_base_mem.as<char>());
@@ -195,7 +200,7 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   profiler.end(xor_post_scan_timer);
 
   const profiler::Profiler::SegmentId xor_rebase_timer =
-      profiler.begin("    xor_rebase");
+      profiler.begin("        xor_rebase");
   kernels::sharemem::
       xor_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
           string_carry_index_mem.as<char>(), ctx.num_cuda_threads(),
@@ -204,12 +209,13 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   profiler.end(xor_rebase_timer);
 
   const profiler::Profiler::SegmentId string_index_timer =
-      profiler.begin("    string_index");
+      profiler.begin("        string_index");
   kernels::sharemem::string_index<<<ctx.grid_size, ctx.block_size>>>(
       string_index_mem.as<long>(), ctx.level_size(),
       string_carry_index_mem.as<char>());
   cuda::synchronize_and_check();
   profiler.end(string_index_timer);
+  profiler.end(total_string_index_related);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
