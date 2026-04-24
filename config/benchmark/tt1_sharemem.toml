@@ -1,0 +1,36 @@
+dataset_path = "dataset/twitter_small_records_remove.json"
+queries = ["$.user.lang"]
+
+[file_reader]
+type = "MMAP"
+
+[index_builder]
+type = "COMBINED"
+grid_size = 32768
+block_size = 512
+reduction_grid_size = 32
+reduction_block_size = 32
+
+[query_executor]
+grid_size = 512
+block_size = 1024
+
+
+# # This one should be two replica of dataset/twitter_small_records_remove.json concatenated, thus its size is 1.6GB, twice larger
+# # To use SHAREMEM index builder, we need to manually double the grid size, so that thread blocks cover all bytes in file
+# dataset_path = "/tmp/dataset/twitter_small_records_remove.json"
+# queries = ["$.user.lang"]
+#
+# [file_reader]
+# type = "MMAP"
+#
+# [index_builder]
+# type = "COMBINED"
+# grid_size = 65536
+# block_size = 512
+# reduction_grid_size = 32
+# reduction_block_size = 32
+#
+# [query_executor]
+# grid_size = 512
+# block_size = 1024

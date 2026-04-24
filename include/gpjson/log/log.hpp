@@ -39,4 +39,13 @@
   } while (0)
 #endif
 
+#define Check(cond, fmt, ...)                                                  \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      printf("[Error] Check failed: %s:%d: %s: (%s) " fmt "\n", __FILE__,      \
+             __LINE__, __func__, #cond, ##__VA_ARGS__);                        \
+      assert(0);                                                               \
+    }                                                                          \
+  } while (0)
+
 #define Abort(...) Assert(0, __VA_ARGS__)

@@ -15,3 +15,7 @@ cmake --build --preset <preset>
 ```
 
 We have provided default config files for different queries used in GpJSON paper under `config/`.
+
+## TODO
+
+- [ ] Consider manually pad the file size to multiple of 8 / 16 / etc, so that we don't need to branch to check index against file size

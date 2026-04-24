@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstddef>
-#include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +18,8 @@ namespace gpjson::profiler {
 
 class Profiler {
 public:
+  explicit Profiler(std::string name = "Profiler");
+
   class SegmentId {
   public:
     SegmentId() = default;
@@ -37,8 +38,6 @@ public:
 
   void end(SegmentId segment_id);
 
-  void print(FILE *out = stdout) const;
-
 private:
   using Clock = std::chrono::steady_clock;
   using Duration = std::chrono::nanoseconds;
@@ -54,6 +53,7 @@ private:
   SegmentId begin_formatted(const char *fmt, va_list args);
   std::string vformat(const char *fmt, va_list args) const;
 
+  std::string name_;
   std::vector<SegmentRecord> segments_;
 };
 } // namespace gpjson::profiler

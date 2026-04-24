@@ -33,11 +33,12 @@
 namespace gpjson::test::index {
 
 inline constexpr int kMaxDepth = 8;
-inline constexpr std::array<gpjson::index::IndexBuilderType, 3>
+inline constexpr std::array<gpjson::index::IndexBuilderType, 4>
     kIndexBuilderTypes{
         gpjson::index::IndexBuilderType::UNCOMBINED,
         gpjson::index::IndexBuilderType::COMBINED,
         gpjson::index::IndexBuilderType::FUSED,
+        gpjson::index::IndexBuilderType::SHAREMEM,
     };
 
 inline long word_from_bits(uint64_t bits) {
@@ -106,6 +107,8 @@ index_builder_type_name(gpjson::index::IndexBuilderType builder_type) {
     return "COMBINED";
   case gpjson::index::IndexBuilderType::FUSED:
     return "FUSED";
+  case gpjson::index::IndexBuilderType::SHAREMEM:
+    return "SHAREMEM";
   }
 
   throw std::invalid_argument("Unknown index builder type.");
@@ -126,6 +129,8 @@ make_index_builder(gpjson::index::IndexBuilderType builder_type,
     return std::make_unique<gpjson::index::CombinedIndexBuilder>(file_reader);
   case gpjson::index::IndexBuilderType::FUSED:
     return std::make_unique<gpjson::index::FusedIndexBuilder>(file_reader);
+  case gpjson::index::IndexBuilderType::SHAREMEM:
+    return std::make_unique<gpjson::index::SharememIndexBuilder>(file_reader);
   }
 
   throw std::invalid_argument("Unknown index builder type.");

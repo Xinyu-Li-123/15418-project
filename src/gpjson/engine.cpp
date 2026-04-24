@@ -42,6 +42,9 @@ create_index_builder(const file::FileReader &file_reader,
   case index::IndexBuilderType::FUSED:
     return std::make_unique<index::FusedIndexBuilder>(file_reader);
 
+  case index::IndexBuilderType::SHAREMEM:
+    return std::make_unique<index::SharememIndexBuilder>(file_reader);
+
   default:
     throw error::common::ImplementationError("Undefined index builder type.");
   }
@@ -99,7 +102,7 @@ Engine::query(const std::string &file_path,
   if (queries_src.empty()) {
     return {};
   }
-  profiler::Profiler profiler;
+  profiler::Profiler profiler("Engine::query profiler");
   const profiler::Profiler::SegmentId engine_query_timer =
       profiler.begin("Engine::query");
 
@@ -165,7 +168,6 @@ Engine::query(const std::string &file_path,
   }
 
   profiler.end(engine_query_timer);
-  profiler.print();
   return merged_result;
 }
 

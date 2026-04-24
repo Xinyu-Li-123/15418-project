@@ -119,6 +119,9 @@ bool device_available() {
   return false;
 }
 
-void synchronize() { check(cudaDeviceSynchronize(), "cudaDeviceSynchronize"); }
+void synchronize() {
+  check(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
+  check(cudaGetLastError(), "cudaGetLastError");
+}
 
 } // namespace gpjson::cuda
