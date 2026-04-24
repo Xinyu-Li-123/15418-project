@@ -5,17 +5,6 @@ namespace gpjson::index::kernels::sharemem {
 __global__ void newline_index(const char *file, int fileSize,
                               int *perTileNewlineOffsetIndex,
                               long *newlineIndex) {
-  // TODO:
-  // - perTileNewlineCountIndex[tile_id] gives block start offset
-  // - Recompute per-thread newline count
-  // - In-warp exclusive scan over per-thread newline count to get in-warp
-  //   newline offset and in-warp num newlines
-  // - In-block exclusive scan over in-warp num newlines to get in-block
-  //   newline offset
-
-  // TODO: Load file into shared memory, piggyback per-thread newline count
-  // computation
-
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -34,13 +23,11 @@ __global__ void newline_index(const char *file, int fileSize,
   // in-tile per-thread flag of is_newline
   __shared__ char in_tile_is_newline[CHUNK_SIZE];
 
-  // Read file chunk into shared memory, along the way compute per-thread
-  // newline count and store in shared memory
+  // Read file chunk into shared memory using coalesced global reads.
   constexpr int packed_bytes_gmem = 8;
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
   constexpr int packed_elems_per_block = CHUNK_SIZE / packed_bytes_gmem;
 
-  int in_thread_count = 0;
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
     const int global_byte_idx = block_start + p * packed_bytes_gmem;
     const int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
@@ -55,7 +42,6 @@ __global__ void newline_index(const char *file, int fileSize,
       const char curChar = packed_chars[local_idx];
       const int in_tile_idx = p * packed_bytes_gmem + local_idx;
       if (global_idx < fileSize && curChar == '\n') {
-        in_thread_count += 1;
         in_tile_is_newline[in_tile_idx] = 1;
       } else {
         in_tile_is_newline[in_tile_idx] = 0;
@@ -69,6 +55,17 @@ __global__ void newline_index(const char *file, int fileSize,
 
   const int lane_id = tid % WARP_SIZE;
   const int warp_id = tid / WARP_SIZE;
+  const int local_start = tid * BYTES_PER_THREAD;
+
+  int in_thread_count = 0;
+#pragma unroll
+  for (int i = 0; i < BYTES_PER_THREAD; ++i) {
+    const int local_idx = local_start + i;
+    const int global_idx = block_start + local_idx;
+    if (global_idx < fileSize && in_tile_is_newline[local_idx]) {
+      in_thread_count += 1;
+    }
+  }
 
   // prefix sum on in_tile_counts to get per-thread newline offset.
 
@@ -122,23 +119,13 @@ __global__ void newline_index(const char *file, int fileSize,
   int global_offset =
       tile_offset + per_warp_offsets[warp_id] + in_warp_exclusive_offset;
 
-  uint2 *packed_in_tile_is_newline =
-      reinterpret_cast<uint2 *>(in_tile_is_newline);
-  for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    const int global_start_idx = block_start + p * packed_bytes_gmem;
-    if (global_start_idx >= fileSize) {
-      break;
-    }
-    const uint2 packed_bytes = packed_in_tile_is_newline[p];
-    const char *packed_flags = reinterpret_cast<const char *>(&packed_bytes);
 #pragma unroll
-    for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
-      const int global_idx = global_start_idx + local_idx;
-      const char curFlag = packed_flags[local_idx];
-      if (global_idx < fileSize && curFlag) {
-        newlineIndex[global_offset + 1] = global_idx;
-        global_offset += 1;
-      }
+  for (int i = 0; i < BYTES_PER_THREAD; ++i) {
+    const int local_idx = local_start + i;
+    const int global_idx = block_start + local_idx;
+    if (global_idx < fileSize && in_tile_is_newline[local_idx]) {
+      newlineIndex[global_offset + 1] = global_idx;
+      global_offset += 1;
     }
   }
 }
