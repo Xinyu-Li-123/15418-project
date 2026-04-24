@@ -19,6 +19,7 @@ namespace gpjson::profiler {
 namespace {
 
 constexpr double kNanosecondsPerMillisecond = 1000000.0;
+constexpr size_t kSpacesPerIndent = 2;
 
 } // namespace
 
@@ -30,6 +31,7 @@ Profiler::SegmentId Profiler::begin(std::string_view name) {
   SegmentRecord record;
   record.name = std::string(name);
   record.start_time = Clock::now();
+  record.indent_level = indent_level_;
   segments_.push_back(std::move(record));
   return SegmentId(segments_.size() - 1);
 }
@@ -71,9 +73,21 @@ void Profiler::end(SegmentId segment_id) {
 
   const double elapsed_ms =
       static_cast<double>(record.elapsed.count()) / kNanosecondsPerMillisecond;
-  std::fprintf(stdout, "%s: %s: %.3f ms\n", name_.c_str(), record.name.c_str(),
-               elapsed_ms);
+  const int indent_width =
+      static_cast<int>(record.indent_level * kSpacesPerIndent);
+  std::fprintf(stdout, "%s: %*s%s: %.3f ms\n", name_.c_str(), indent_width, "",
+               record.name.c_str(), elapsed_ms);
   std::fflush(stdout);
+}
+
+void Profiler::indent() { ++indent_level_; }
+
+void Profiler::unindent() {
+  Assert(indent_level_ > 0, "Profiler unindent called at indent level 0.");
+  if (indent_level_ == 0) {
+    return;
+  }
+  --indent_level_;
 }
 
 std::string Profiler::vformat(const char *fmt, va_list args) const {

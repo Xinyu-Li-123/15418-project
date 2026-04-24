@@ -37,6 +37,8 @@ public:
   SegmentId beginf(const char *fmt, ...);
 
   void end(SegmentId segment_id);
+  void indent();
+  void unindent();
 
 private:
   using Clock = std::chrono::steady_clock;
@@ -47,6 +49,7 @@ private:
     std::string name;
     TimePoint start_time{};
     Duration elapsed{Duration::zero()};
+    size_t indent_level{0};
     bool completed{false};
   };
 
@@ -55,5 +58,6 @@ private:
 
   std::string name_;
   std::vector<SegmentRecord> segments_;
+  size_t indent_level_{0};
 };
 } // namespace gpjson::profiler

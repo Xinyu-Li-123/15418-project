@@ -131,13 +131,14 @@ Engine::query(const std::string &file_path,
   for (auto &partition : file_reader->get_partitions()) {
     const profiler::Profiler::SegmentId partition_total_timer =
         profiler.beginf("partition %zu total", partition.partition_id());
+    profiler.indent();
     const profiler::Profiler::SegmentId load_to_device_timer = profiler.beginf(
-        "  partition %zu load_to_device", partition.partition_id());
+        "partition %zu load_to_device", partition.partition_id());
     partition.load_to_device();
     profiler.end(load_to_device_timer);
 
-    const profiler::Profiler::SegmentId build_index_timer = profiler.beginf(
-        "  partition %zu build_index", partition.partition_id());
+    const profiler::Profiler::SegmentId build_index_timer =
+        profiler.beginf("partition %zu build_index", partition.partition_id());
     index::BuiltIndices built_indices;
     built_indices =
         index_builder->build(partition, compiled_queries.get_max_depth(),
@@ -145,20 +146,21 @@ Engine::query(const std::string &file_path,
     profiler.end(build_index_timer);
 
     const profiler::Profiler::SegmentId execute_query_timer = profiler.beginf(
-        "  partition %zu execute_query", partition.partition_id());
+        "partition %zu execute_query", partition.partition_id());
     query::BatchQueryResult batch_result(compiled_queries.size());
     batch_result = query_executor.execute_batch(compiled_queries, partition,
                                                 built_indices);
     profiler.end(execute_query_timer);
 
     const profiler::Profiler::SegmentId materialize_results_timer =
-        profiler.beginf("  partition %zu materialize_results",
+        profiler.beginf("partition %zu materialize_results",
                         partition.partition_id());
     query::MaterializedBatchResult partition_result;
     partition_result = batch_result.materialize();
     profiler.end(materialize_results_timer);
 
     append_partition_results(merged_queries, partition_result);
+    profiler.unindent();
     profiler.end(partition_total_timer);
   }
 
