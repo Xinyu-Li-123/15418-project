@@ -926,10 +926,20 @@ newline_index_sharemem_ballot_packed_smem(const char *file, int fileSize,
   }
 }
 
-__device__ void
-newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
-                                               int *perTileNewlineOffsetIndex,
-                                               long *newlineIndex) {
+/**
+ *
+ * We pack load multiple bytes from global memory, compute "incorrect" bitmap
+ * using ballot as usual, do a bitmap transpose over ballot results within warp
+ * to reorder result into same order we would get by unpacked read from global
+ * memory for packed_bytes_gmem times.
+ *
+ * "single-lane-fix" means we only use lane 0 to do the transpose. This is not
+ * efficient enough to beat the share-memory-only optimization, even after
+ * tuning packed_bytes_gmem. Lane 0 is doing too much work.
+ */
+__device__ void newline_index_sharemem_ballot_packed_gmem_smem_single_lane_fix(
+    const char *file, int fileSize, int *perTileNewlineOffsetIndex,
+    long *newlineIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -942,12 +952,17 @@ newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
   constexpr int WARP_SIZE = 32;
   constexpr int WARPS_PER_BLOCK = THREADS_PER_BLOCK / WARP_SIZE;
 
-  constexpr int PACK_BYTES = 8;
-  constexpr int BYTES_PER_WARP = BYTES_PER_THREAD * WARP_SIZE;         // 2048
-  constexpr int SUPER_ROUNDS_PER_WARP = BYTES_PER_THREAD / PACK_BYTES; // 8
+  // A smaller global pack size will reduce lane 0's transpose workload, but
+  // make global read less parallelized
+  constexpr int PACK_BYTES_GMEM = 4;
+  constexpr int PACK_BYTES_SMEM = 8;
+
+  constexpr int BYTES_PER_WARP = BYTES_PER_THREAD * WARP_SIZE; // 2048
+  constexpr int SUPER_ROUNDS_PER_WARP = BYTES_PER_THREAD / PACK_BYTES_SMEM; // 8
 
   static_assert(THREADS_PER_BLOCK % WARP_SIZE == 0);
-  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(BYTES_PER_THREAD % PACK_BYTES_GMEM == 0);
+  static_assert(BYTES_PER_THREAD % PACK_BYTES_SMEM == 0);
   static_assert(BYTES_PER_WARP * WARPS_PER_BLOCK == CHUNK_SIZE);
 
   const int tid = threadIdx.x;
@@ -964,11 +979,12 @@ newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
   //   smem_packed_bytes[super_round][tid]
   // Each uint2 stores 8 actual file bytes for one lane across 8 consecutive
   // ordinary rounds:
-  //   byte i => ordinary_round = super_round * PACK_BYTES + i
+  //   byte i => ordinary_round = super_round * 8 + i
+  __shared__ uint2 smem_packed_bytes[SUPER_ROUNDS_PER_WARP * THREADS_PER_BLOCK];
 
   // One bitmap per (warp, super_round, byte_in_pack).
   __shared__ unsigned int
-      warp_bitmaps[WARPS_PER_BLOCK * SUPER_ROUNDS_PER_WARP * PACK_BYTES];
+      warp_bitmaps[WARPS_PER_BLOCK * SUPER_ROUNDS_PER_WARP * PACK_BYTES_SMEM];
 
   __shared__ int per_warp_totals[WARPS_PER_BLOCK];
   __shared__ int per_warp_offsets[WARPS_PER_BLOCK];
@@ -976,85 +992,91 @@ newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
   constexpr unsigned FULL_MASK = 0xffffffffu;
 
   // --------------------------------------------------------------------------
-  // Stage file bytes into shared memory using packed global reads in contiguous
-  // file order. Then lane 0 transposes the 8 raw ballot masks into the 8 normal
-  // round-major bitmaps expected by the replay phase.
+  // Stage file bytes into shared memory in packed ballot order.
+  //
+  // Use 4-byte packed global loads in contiguous file order. For each
+  // super-round, each lane performs two 4-byte contiguous global loads:
+  //   load 0 covers ordinary rounds [0..3]
+  //   load 1 covers ordinary rounds [4..7]
+  // Then combine them into one 8-byte packed word in ballot order for shared
+  // memory.
   // --------------------------------------------------------------------------
-  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+  const unsigned int *file_packed_gmem =
+      reinterpret_cast<const unsigned int *>(file);
 
+#pragma unroll
+  for (int super_round = 0; super_round < SUPER_ROUNDS_PER_WARP;
+       ++super_round) {
+    uint2 packed_word = make_uint2(0u, 0u);
+    unsigned char *packed_chars =
+        reinterpret_cast<unsigned char *>(&packed_word);
+
+#pragma unroll
+    for (int half = 0; half < 2; ++half) {
+      const int half_base_round = super_round * PACK_BYTES_SMEM + half * 4;
+
+      // Contiguous 4-byte global load:
+      // bytes [lane*4 + 0 .. lane*4 + 3] within this 128-byte half-round.
+      const int global_byte_idx =
+          warp_global_base + half_base_round * WARP_SIZE + lane_id * 4;
+
+      unsigned int packed4 = 0u;
+      if (global_byte_idx < fileSize) {
+        const int global_packed_idx = global_byte_idx / PACK_BYTES_GMEM;
+        packed4 = file_packed_gmem[global_packed_idx];
+      }
+
+      const unsigned char *src_chars =
+          reinterpret_cast<const unsigned char *>(&packed4);
+
+#pragma unroll
+      for (int i = 0; i < 4; ++i) {
+        packed_chars[half * 4 + i] = src_chars[i];
+      }
+    }
+
+    const int smem_idx = super_round * THREADS_PER_BLOCK + tid;
+    smem_packed_bytes[smem_idx] = packed_word;
+  }
+  __syncthreads();
+
+  // --------------------------------------------------------------------------
+  // First pass:
+  // - read packed bytes from shared memory
+  // - generate 8 ballots per super-round
+  // - store bitmaps
+  // - accumulate one total per warp
+  // --------------------------------------------------------------------------
   int warp_total = 0;
 
 #pragma unroll
   for (int super_round = 0; super_round < SUPER_ROUNDS_PER_WARP;
        ++super_round) {
-    // Contiguous packed global load:
-    // lane l loads bytes
-    //   warp_global_base + super_round * (WARP_SIZE * PACK_BYTES) +
-    //   l*PACK_BYTES
-    const int packed_global_base = warp_global_base +
-                                   super_round * (WARP_SIZE * PACK_BYTES) +
-                                   lane_id * PACK_BYTES;
-
-    uint2 packed_word = make_uint2(0u, 0u);
-    if (packed_global_base < fileSize) {
-      const int packed_global_idx = packed_global_base / PACK_BYTES;
-      packed_word = file_packed_gmem[packed_global_idx];
-    }
-
-    // Keep the packed bytes around in shared memory. This preserves the packed
-    // shared-memory read path used by the prior ballot helper.
     const int smem_idx = super_round * THREADS_PER_BLOCK + tid;
-
+    const uint2 packed_word = smem_packed_bytes[smem_idx];
     const unsigned char *packed_chars =
         reinterpret_cast<const unsigned char *>(&packed_word);
 
-    // Raw ballots produced from contiguous packed global loads.
-    unsigned int raw_bitmaps[PACK_BYTES];
-
 #pragma unroll
-    for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES; ++byte_in_pack) {
-      const int global_idx = packed_global_base + byte_in_pack;
+    for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES_SMEM; ++byte_in_pack) {
+      const int ordinary_round = super_round * PACK_BYTES_SMEM + byte_in_pack;
+      const int global_idx =
+          warp_global_base + ordinary_round * WARP_SIZE + lane_id;
+
       const bool is_newline =
           (global_idx < fileSize && packed_chars[byte_in_pack] == '\n');
-      raw_bitmaps[byte_in_pack] = __ballot_sync(FULL_MASK, is_newline);
-    }
 
-    // Lane 0 transposes the 8 raw bitmaps into the 8 round-major bitmaps used
-    // by the normal ballot replay order.
-    if (lane_id == 0) {
-      unsigned int transposed_bitmaps[PACK_BYTES];
+      const unsigned int bitmap = __ballot_sync(FULL_MASK, is_newline);
 
-#pragma unroll
-      for (int target_round = 0; target_round < PACK_BYTES; ++target_round) {
-        unsigned int dst = 0u;
-
-#pragma unroll
-        for (int lane_group = 0; lane_group < PACK_BYTES / 2; ++lane_group) {
-          const int src_bit = target_round * (PACK_BYTES / 2) + lane_group;
-
-          unsigned int chunk = 0u;
-#pragma unroll
-          for (int raw_idx = 0; raw_idx < PACK_BYTES; ++raw_idx) {
-            chunk |= ((raw_bitmaps[raw_idx] >> src_bit) & 1u) << raw_idx;
-          }
-
-          dst |= chunk << (lane_group * PACK_BYTES);
-        }
-
-        transposed_bitmaps[target_round] = dst;
-        warp_total += __popc(dst);
-      }
-
-#pragma unroll
-      for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES; ++byte_in_pack) {
+      if (lane_id == 0) {
         const int bitmap_idx =
-            ((warp_id * SUPER_ROUNDS_PER_WARP + super_round) * PACK_BYTES) +
-            byte_in_pack;
-        warp_bitmaps[bitmap_idx] = transposed_bitmaps[byte_in_pack];
+            ((warp_id * SUPER_ROUNDS_PER_WARP + super_round) * PACK_BYTES_SMEM +
+             byte_in_pack);
+        warp_bitmaps[bitmap_idx] = bitmap;
+        warp_total += __popc(bitmap);
       }
     }
   }
-  __syncthreads();
 
   if (lane_id == 0) {
     per_warp_totals[warp_id] = warp_total;
@@ -1096,9 +1118,9 @@ newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
   for (int super_round = 0; super_round < SUPER_ROUNDS_PER_WARP;
        ++super_round) {
 #pragma unroll
-    for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES; ++byte_in_pack) {
+    for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES_SMEM; ++byte_in_pack) {
       const int bitmap_idx =
-          ((warp_id * SUPER_ROUNDS_PER_WARP + super_round) * PACK_BYTES) +
+          ((warp_id * SUPER_ROUNDS_PER_WARP + super_round) * PACK_BYTES_SMEM) +
           byte_in_pack;
       const unsigned int bitmap = warp_bitmaps[bitmap_idx];
       const int round_count = __popc(bitmap);
@@ -1109,7 +1131,222 @@ newline_index_sharemem_ballot_packed_gmem_smem(const char *file, int fileSize,
             (lane_id == 0) ? 0u : ((1u << lane_id) - 1u);
         const int rank_in_round = __popc(bitmap & lower_lane_mask);
 
-        const int ordinary_round = super_round * PACK_BYTES + byte_in_pack;
+        const int ordinary_round = super_round * PACK_BYTES_SMEM + byte_in_pack;
+        const int global_idx =
+            warp_global_base + ordinary_round * WARP_SIZE + lane_id;
+
+        // Keep GPJSON's leading sentinel at index 0.
+        newlineIndex[tile_offset + per_warp_offsets[warp_id] +
+                     warp_running_offset + rank_in_round + 1] =
+            static_cast<long>(global_idx);
+      }
+
+      warp_running_offset += round_count;
+    }
+  }
+}
+
+__device__ void newline_index_sharemem_ballot_packed_gmem_smem_multi_lane_fix(
+    const char *file, int fileSize, int *perTileNewlineOffsetIndex,
+    long *newlineIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+  constexpr int CHUNK_SIZE = 32768; // 512 * 64
+
+  Check(CHUNK_SIZE == BYTES_PER_THREAD * THREADS_PER_BLOCK,
+        "Invalid choice of kernel config.");
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int WARP_SIZE = 32;
+  constexpr int WARPS_PER_BLOCK = THREADS_PER_BLOCK / WARP_SIZE;
+
+  constexpr int PACK_BYTES_GMEM = 4;
+  constexpr int PACK_BYTES_SMEM = 8;
+  constexpr int BYTES_PER_WARP = BYTES_PER_THREAD * WARP_SIZE; // 2048
+
+  constexpr int GMEM_SUPER_ROUNDS_PER_WARP =
+      BYTES_PER_THREAD / PACK_BYTES_GMEM; // 16
+  constexpr int SMEM_SUPER_ROUNDS_PER_WARP =
+      BYTES_PER_THREAD / PACK_BYTES_SMEM; // 8
+
+  static_assert(THREADS_PER_BLOCK % WARP_SIZE == 0);
+  static_assert(BYTES_PER_THREAD % PACK_BYTES_GMEM == 0);
+  static_assert(BYTES_PER_THREAD % PACK_BYTES_SMEM == 0);
+  static_assert(BYTES_PER_WARP * WARPS_PER_BLOCK == CHUNK_SIZE);
+  static_assert(PACK_BYTES_SMEM == 2 * PACK_BYTES_GMEM);
+
+  const int tid = threadIdx.x;
+  const int tile_idx = blockIdx.x;
+  const int block_start = tile_idx * CHUNK_SIZE;
+  const int tile_offset = perTileNewlineOffsetIndex[tile_idx];
+
+  const int lane_id = tid % WARP_SIZE;
+  const int warp_id = tid / WARP_SIZE;
+
+  const int warp_global_base = block_start + warp_id * BYTES_PER_WARP;
+
+  // One bitmap per (warp, super_round, byte_in_pack).
+  __shared__ unsigned int warp_bitmaps[WARPS_PER_BLOCK *
+                                       SMEM_SUPER_ROUNDS_PER_WARP *
+                                       PACK_BYTES_SMEM];
+
+  __shared__ int per_warp_totals[WARPS_PER_BLOCK];
+  __shared__ int per_warp_offsets[WARPS_PER_BLOCK];
+
+  constexpr unsigned FULL_MASK = 0xffffffffu;
+  constexpr int SUBGROUP_SIZE = 8;
+  const int subgroup_id = lane_id / SUBGROUP_SIZE;   // [0, 4)
+  const int subgroup_lane = lane_id % SUBGROUP_SIZE; // [0, 8)
+
+  const unsigned int *file_packed_gmem =
+      reinterpret_cast<const unsigned int *>(file);
+
+  int warp_total = 0;
+
+#pragma unroll
+  for (int smem_super_round = 0; smem_super_round < SMEM_SUPER_ROUNDS_PER_WARP;
+       ++smem_super_round) {
+    unsigned int raw_bitmaps[PACK_BYTES_SMEM];
+
+#pragma unroll
+    for (int i = 0; i < PACK_BYTES_SMEM; ++i) {
+      raw_bitmaps[i] = 0u;
+    }
+
+    // Build 8 raw bitmaps using two packed 4-byte global loads.
+#pragma unroll
+    for (int half = 0; half < 2; ++half) {
+      const int gmem_super_round = smem_super_round * 2 + half;
+
+      // Contiguous packed global load:
+      // lane l loads bytes
+      //   warp_global_base +
+      //   gmem_super_round * (WARP_SIZE * PACK_BYTES_GMEM) + l*PACK_BYTES_GMEM
+      const int packed_global_base =
+          warp_global_base + gmem_super_round * (WARP_SIZE * PACK_BYTES_GMEM) +
+          lane_id * PACK_BYTES_GMEM;
+
+      unsigned int packed_word = 0u;
+      if (packed_global_base < fileSize) {
+        const int packed_global_idx = packed_global_base / PACK_BYTES_GMEM;
+        packed_word = file_packed_gmem[packed_global_idx];
+      }
+
+      const unsigned char *packed_chars =
+          reinterpret_cast<const unsigned char *>(&packed_word);
+
+#pragma unroll
+      for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES_GMEM;
+           ++byte_in_pack) {
+        const int global_idx = packed_global_base + byte_in_pack;
+        const bool is_newline =
+            (global_idx < fileSize && packed_chars[byte_in_pack] == '\n');
+        const unsigned int bitmap = __ballot_sync(FULL_MASK, is_newline);
+        if (lane_id == byte_in_pack) {
+          raw_bitmaps[half * PACK_BYTES_GMEM + byte_in_pack] = bitmap;
+        }
+      }
+    }
+
+    // Replicate raw[0..7] into each 8-lane subgroup:
+    //   lanes 0..7, 8..15, 16..23, 24..31 all hold raw[0..7].
+    const unsigned int raw_bitmap =
+        __shfl_sync(FULL_MASK, raw_bitmaps[subgroup_lane], subgroup_lane);
+
+    const unsigned int subgroup_mask =
+        (((1u << SUBGROUP_SIZE) - 1u) << (subgroup_id * SUBGROUP_SIZE));
+
+    // Efficient cooperative transpose:
+    // For target_round r, subgroup g builds the byte corresponding to source
+    // bit (4*r + g). Then all lanes perform the shuffles, and lane 0 writes
+    // the combined 32-bit destination bitmap.
+#pragma unroll
+    for (int target_round = 0; target_round < PACK_BYTES_SMEM; ++target_round) {
+      const int src_bit =
+          target_round * (WARP_SIZE / SUBGROUP_SIZE) + subgroup_id; // 4*r + g
+
+      const bool extracted_bit = ((raw_bitmap >> src_bit) & 1u) != 0u;
+      unsigned int subgroup_ballot =
+          __ballot_sync(subgroup_mask, extracted_bit);
+      subgroup_ballot >>= (subgroup_id * SUBGROUP_SIZE);
+
+      const unsigned int my_byte =
+          (subgroup_lane == 0) ? (subgroup_ballot & 0xffu) : 0u;
+
+      const unsigned int byte0 =
+          __shfl_sync(FULL_MASK, my_byte, 0 * SUBGROUP_SIZE);
+      const unsigned int byte1 =
+          __shfl_sync(FULL_MASK, my_byte, 1 * SUBGROUP_SIZE);
+      const unsigned int byte2 =
+          __shfl_sync(FULL_MASK, my_byte, 2 * SUBGROUP_SIZE);
+      const unsigned int byte3 =
+          __shfl_sync(FULL_MASK, my_byte, 3 * SUBGROUP_SIZE);
+
+      if (lane_id == 0) {
+        const unsigned int dst =
+            byte0 | (byte1 << 8) | (byte2 << 16) | (byte3 << 24);
+
+        const int bitmap_idx =
+            ((warp_id * SMEM_SUPER_ROUNDS_PER_WARP + smem_super_round) *
+             PACK_BYTES_SMEM) +
+            target_round;
+        warp_bitmaps[bitmap_idx] = dst;
+        warp_total += __popc(dst);
+      }
+    }
+  }
+
+  if (lane_id == 0) {
+    per_warp_totals[warp_id] = warp_total;
+  }
+  __syncthreads();
+
+  // Warp 0 scans per-warp totals to get per-warp offsets within the block.
+  if (warp_id == 0) {
+    int per_warp_inclusive_offset =
+        (lane_id < WARPS_PER_BLOCK) ? per_warp_totals[lane_id] : 0;
+
+#pragma unroll
+    for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
+      const int other_warp_count =
+          __shfl_up_sync(FULL_MASK, per_warp_inclusive_offset, pass_offset);
+      if (lane_id >= pass_offset) {
+        per_warp_inclusive_offset += other_warp_count;
+      }
+    }
+
+    if (lane_id < WARPS_PER_BLOCK) {
+      per_warp_offsets[lane_id] =
+          per_warp_inclusive_offset - per_warp_totals[lane_id];
+    }
+  }
+  __syncthreads();
+
+  // Replay the stored bitmaps in increasing byte order within the warp's
+  // 2048-byte region:
+  //   super_round 0, byte 0..7, then super_round 1, ...
+  int warp_running_offset = 0;
+
+#pragma unroll
+  for (int super_round = 0; super_round < SMEM_SUPER_ROUNDS_PER_WARP;
+       ++super_round) {
+#pragma unroll
+    for (int byte_in_pack = 0; byte_in_pack < PACK_BYTES_SMEM; ++byte_in_pack) {
+      const int bitmap_idx =
+          ((warp_id * SMEM_SUPER_ROUNDS_PER_WARP + super_round) *
+           PACK_BYTES_SMEM) +
+          byte_in_pack;
+      const unsigned int bitmap = warp_bitmaps[bitmap_idx];
+      const int round_count = __popc(bitmap);
+
+      const bool is_newline = ((bitmap >> lane_id) & 1u) != 0u;
+      if (is_newline) {
+        const unsigned int lower_lane_mask =
+            (lane_id == 0) ? 0u : ((1u << lane_id) - 1u);
+        const int rank_in_round = __popc(bitmap & lower_lane_mask);
+
+        const int ordinary_round = super_round * PACK_BYTES_SMEM + byte_in_pack;
         const int global_idx =
             warp_global_base + ordinary_round * WARP_SIZE + lane_id;
 
@@ -1137,16 +1374,21 @@ __global__ void newline_index(const char *file, int fileSize,
   // perTileNewlineOffsetIndex,
   //                                   newlineIndex);
 
-  // newline_index_sharemem_transposed_packed(
-  //     file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
+  /* Best in share memory only optimization */
+  newline_index_sharemem_transposed_packed(
+      file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
 
   // newline_index_sharemem_ballot(file, fileSize, perTileNewlineOffsetIndex,
   //                               newlineIndex);
 
   // newline_index_sharemem_ballot_packed_smem(
   //     file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
-  newline_index_sharemem_ballot_packed_gmem_smem(
-      file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
+
+  // newline_index_sharemem_ballot_packed_gmem_smem_single_lane_fix(
+  //     file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
+
+  // newline_index_sharemem_ballot_packed_gmem_smem_multi_lane_fix(
+  //     file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
 }
 
 } // namespace gpjson::index::kernels::sharemem
