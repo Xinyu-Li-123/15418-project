@@ -287,6 +287,14 @@ run_char_sum_scan_thrust(const SharememIndexBuilderContext &ctx,
   profiler.end(char_sum_scan_timer);
 }
 
+/**
+ * Dispatch to different templated kernel for diff max_depth, and fallback to
+ * default if more than MAX_NUM_LEVEL_SMEM
+ */
+void create_leveled_bitmap_index_for_max_depth(
+    const SharememIndexBuilderContext &ctx, const StringIndex &string_index,
+    profiler::Profiler &profiler, const int max_depth) {}
+
 NewlineStringIndices
 create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
                                 profiler::Profiler &profiler) {

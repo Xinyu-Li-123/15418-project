@@ -5,13 +5,71 @@
 
 namespace gpjson::index::kernels::sharemem {
 namespace {
-constexpr int kMaxNumLevels = 22;
-}
 
-__device__ void leveled_bitmaps_index_sharemem_transposed_packed(
-    const char *file, int fileSize, const long *stringIndex,
-    const char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex,
-    int levelSize, int numLevels) {
+constexpr int kMaxNumLevels = 22;
+constexpr int MAX_NUM_LEVEL_SMEM = 8;
+
+static_assert(MAX_NUM_LEVEL_SMEM <= kMaxNumLevels);
+
+template <int NumLevels> struct LevelBitmapAccum;
+
+#define GPJSON_CAT_IMPL(a, b) a##b
+#define GPJSON_CAT(a, b) GPJSON_CAT_IMPL(a, b)
+
+#define GPJSON_LEVELS_1(M) M(0)
+#define GPJSON_LEVELS_2(M) GPJSON_LEVELS_1(M) M(1)
+#define GPJSON_LEVELS_3(M) GPJSON_LEVELS_2(M) M(2)
+#define GPJSON_LEVELS_4(M) GPJSON_LEVELS_3(M) M(3)
+#define GPJSON_LEVELS_5(M) GPJSON_LEVELS_4(M) M(4)
+#define GPJSON_LEVELS_6(M) GPJSON_LEVELS_5(M) M(5)
+#define GPJSON_LEVELS_7(M) GPJSON_LEVELS_6(M) M(6)
+#define GPJSON_LEVELS_8(M) GPJSON_LEVELS_7(M) M(7)
+
+#define GPJSON_LEVELS_FOR(N, M) GPJSON_CAT(GPJSON_LEVELS_, N)(M)
+
+#define GPJSON_ACCUM_FIELD(level_id) long bitmap##level_id = 0;
+
+#define GPJSON_ACCUM_RECORD_CASE(level_id)                                     \
+  case level_id:                                                               \
+    bitmap##level_id |= bit;                                                   \
+    break;
+
+#define GPJSON_ACCUM_WRITE(level_id)                                           \
+  out[levelSize * (level_id) + wordIdx] = bitmap##level_id;
+
+#define GPJSON_DEFINE_ACCUM(NUM_LEVELS)                                        \
+  template <> struct LevelBitmapAccum<NUM_LEVELS> {                            \
+    GPJSON_LEVELS_FOR(NUM_LEVELS, GPJSON_ACCUM_FIELD)                          \
+                                                                               \
+    __device__ __forceinline__ void record(int level, long bit) {              \
+      switch (level) {                                                         \
+        GPJSON_LEVELS_FOR(NUM_LEVELS, GPJSON_ACCUM_RECORD_CASE)                \
+      default:                                                                 \
+        break;                                                                 \
+      }                                                                        \
+    }                                                                          \
+                                                                               \
+    __device__ __forceinline__ void write(long *out, int levelSize,            \
+                                          int wordIdx) const {                 \
+      GPJSON_LEVELS_FOR(NUM_LEVELS, GPJSON_ACCUM_WRITE)                        \
+    }                                                                          \
+  };
+
+GPJSON_DEFINE_ACCUM(1)
+GPJSON_DEFINE_ACCUM(2)
+GPJSON_DEFINE_ACCUM(3)
+GPJSON_DEFINE_ACCUM(4)
+GPJSON_DEFINE_ACCUM(5)
+GPJSON_DEFINE_ACCUM(6)
+GPJSON_DEFINE_ACCUM(7)
+GPJSON_DEFINE_ACCUM(8)
+
+template <int NumLevels>
+__device__ void leveled_bitmaps_index_smem_impl(const char *file, int fileSize,
+                                                const long *stringIndex,
+                                                char *leveledBitmapsAuxIndex,
+                                                long *leveledBitmapsIndex,
+                                                int levelSize) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
@@ -25,6 +83,8 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
   constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
   constexpr int PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / PACK_BYTES;
 
+  static_assert(NumLevels >= 1);
+  static_assert(NumLevels <= MAX_NUM_LEVEL_SMEM);
   static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
   static_assert(CHUNK_SIZE % PACK_BYTES == 0);
   static_assert(sizeof(uint2) == PACK_BYTES);
@@ -79,7 +139,8 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
   __syncthreads();
 
   if (word_idx < levelSize) {
-    for (int level = 0; level < numLevels; level += 1) {
+#pragma unroll
+    for (int level = 0; level < NumLevels; level += 1) {
       leveledBitmapsIndex[levelSize * level + word_idx] = 0;
     }
   }
@@ -88,12 +149,7 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
     return;
   }
 
-  long bitmap_words[kMaxNumLevels];
-
-#pragma unroll
-  for (int level = 0; level < kMaxNumLevels; level += 1) {
-    bitmap_words[level] = 0;
-  }
+  LevelBitmapAccum<NumLevels> accum;
 
   const long string = stringIndex[word_idx];
   signed char level = leveledBitmapsAuxIndex[global_thread_id];
@@ -120,31 +176,145 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
       }
 
       const unsigned char value = packed_bytes[i];
+      const long bit = 1L << byte_offset;
 
       if (value == static_cast<unsigned char>('{') ||
           value == static_cast<unsigned char>('[')) {
         level++;
-        if (level >= 0 && level < numLevels) {
-          bitmap_words[level] |= 1L << byte_offset;
+        if (level >= 0 && level < NumLevels) {
+          accum.record(level, bit);
         }
       } else if (value == static_cast<unsigned char>('}') ||
                  value == static_cast<unsigned char>(']')) {
-        if (level >= 0 && level < numLevels) {
-          bitmap_words[level] |= 1L << byte_offset;
+        if (level >= 0 && level < NumLevels) {
+          accum.record(level, bit);
         }
         level--;
       } else if (value == static_cast<unsigned char>(':') ||
                  value == static_cast<unsigned char>(',')) {
-        if (level >= 0 && level < numLevels) {
-          bitmap_words[level] |= 1L << byte_offset;
+        if (level >= 0 && level < NumLevels) {
+          accum.record(level, bit);
         }
       }
     }
   }
 
   if (word_idx < levelSize) {
-    for (int level = 0; level < numLevels; level += 1) {
-      leveledBitmapsIndex[levelSize * level + word_idx] = bitmap_words[level];
+    accum.write(leveledBitmapsIndex, levelSize, word_idx);
+  }
+}
+
+__device__ void leveled_bitmaps_index_smem_dispatch(
+    const char *file, int fileSize, const long *stringIndex,
+    char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex, int levelSize,
+    int numLevels) {
+  switch (numLevels) {
+  case 1:
+    leveled_bitmaps_index_smem_impl<1>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 2:
+    leveled_bitmaps_index_smem_impl<2>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 3:
+    leveled_bitmaps_index_smem_impl<3>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 4:
+    leveled_bitmaps_index_smem_impl<4>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 5:
+    leveled_bitmaps_index_smem_impl<5>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 6:
+    leveled_bitmaps_index_smem_impl<6>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 7:
+    leveled_bitmaps_index_smem_impl<7>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  case 8:
+    leveled_bitmaps_index_smem_impl<8>(file, fileSize, stringIndex,
+                                       leveledBitmapsAuxIndex,
+                                       leveledBitmapsIndex, levelSize);
+    break;
+  default:
+    break;
+  }
+}
+
+} // namespace
+
+__device__ void leveled_bitmaps_index_default(const char *file, int fileSize,
+                                              const long *stringIndex,
+                                              char *leveledBitmapsAuxIndex,
+                                              long *leveledBitmapsIndex,
+                                              int levelSize, int numLevels) {
+  assert(numLevels <= kMaxNumLevels);
+
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = blockDim.x * gridDim.x;
+
+  int charsPerThread = (fileSize + stride - 1) / stride;
+  int bitmapAlignedCharsPerThread = ((charsPerThread + 64 - 1) / 64) * 64;
+  int start = index * bitmapAlignedCharsPerThread;
+  int end = start + bitmapAlignedCharsPerThread;
+
+  signed char level = leveledBitmapsAuxIndex[index];
+
+  for (int blockStart = start; blockStart < end && blockStart < fileSize;
+       blockStart += 64) {
+    const int wordIndex = blockStart / 64;
+    const long string = stringIndex[wordIndex];
+    // Accumulate a full 64-bit output word locally, then write each level once.
+    long structuralBitmaps[kMaxNumLevels];
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
+      structuralBitmaps[bitmapLevel] = 0;
+    }
+
+    const int blockEnd =
+        blockStart + 64 < fileSize ? blockStart + 64 : fileSize;
+    for (int i = blockStart; i < blockEnd; i += 1) {
+      assert(level >= -1);
+
+      const long offsetInBlock = i % 64;
+      const long bit = 1L << offsetInBlock;
+      if ((string & bit) != 0) {
+        continue;
+      }
+
+      const char value = file[i];
+      if (value == '{' || value == '[') {
+        level++;
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+      } else if (value == '}' || value == ']') {
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+        level--;
+      } else if (value == ':' || value == ',') {
+        if (level >= 0 && level < numLevels) {
+          structuralBitmaps[level] |= bit;
+        }
+      }
+    }
+
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
+      leveledBitmapsIndex[levelSize * bitmapLevel + wordIndex] =
+          structuralBitmaps[bitmapLevel];
     }
   }
 }
@@ -156,9 +326,31 @@ __global__ void leveled_bitmaps_index(const char *file, int fileSize,
                                       int numLevels) {
   assert(numLevels <= kMaxNumLevels);
 
-  leveled_bitmaps_index_sharemem_transposed_packed(
-      file, fileSize, stringIndex, leveledBitmapsAuxIndex, leveledBitmapsIndex,
-      levelSize, numLevels);
+  if (numLevels >= 1 && numLevels <= MAX_NUM_LEVEL_SMEM) {
+    leveled_bitmaps_index_smem_dispatch(
+        file, fileSize, stringIndex, leveledBitmapsAuxIndex,
+        leveledBitmapsIndex, levelSize, numLevels);
+  } else {
+    leveled_bitmaps_index_default(file, fileSize, stringIndex,
+                                  leveledBitmapsAuxIndex, leveledBitmapsIndex,
+                                  levelSize, numLevels);
+  }
 }
+
+#undef GPJSON_DEFINE_ACCUM
+#undef GPJSON_ACCUM_WRITE
+#undef GPJSON_ACCUM_RECORD_CASE
+#undef GPJSON_ACCUM_FIELD
+#undef GPJSON_LEVELS_FOR
+#undef GPJSON_LEVELS_8
+#undef GPJSON_LEVELS_7
+#undef GPJSON_LEVELS_6
+#undef GPJSON_LEVELS_5
+#undef GPJSON_LEVELS_4
+#undef GPJSON_LEVELS_3
+#undef GPJSON_LEVELS_2
+#undef GPJSON_LEVELS_1
+#undef GPJSON_CAT
+#undef GPJSON_CAT_IMPL
 
 } // namespace gpjson::index::kernels::sharemem
