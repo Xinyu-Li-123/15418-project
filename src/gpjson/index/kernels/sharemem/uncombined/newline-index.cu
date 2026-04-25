@@ -81,7 +81,7 @@ __device__ void newline_index_sharemem_naive(const char *file, int fileSize,
 #pragma unroll
   for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
     int other_thread_count =
-        __shfl_up_sync(0xffffffff, in_warp_inclusive_offset, pass_offset);
+        __shfl_up_sync(0xffffffffu, in_warp_inclusive_offset, pass_offset);
     if (lane_id >= pass_offset) {
       in_warp_inclusive_offset += other_thread_count;
     }
@@ -90,7 +90,7 @@ __device__ void newline_index_sharemem_naive(const char *file, int fileSize,
   const int in_warp_exclusive_offset =
       in_warp_inclusive_offset - in_thread_count;
   const int in_warp_num_newlines =
-      __shfl_sync(0xffffffff, in_warp_inclusive_offset, WARP_SIZE - 1);
+      __shfl_sync(0xffffffffu, in_warp_inclusive_offset, WARP_SIZE - 1);
 
   if (lane_id == 0) {
     per_warp_totals[warp_id] = in_warp_num_newlines;
@@ -103,7 +103,7 @@ __device__ void newline_index_sharemem_naive(const char *file, int fileSize,
 #pragma unroll
     for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
       int other_warp_count =
-          __shfl_up_sync(0xffffffff, per_warp_inclusive_offset, pass_offset);
+          __shfl_up_sync(0xffffffffu, per_warp_inclusive_offset, pass_offset);
       if (lane_id >= pass_offset) {
         per_warp_inclusive_offset += other_warp_count;
       }
@@ -214,7 +214,7 @@ __device__ void newline_index_sharemem(const char *file, int fileSize,
 #pragma unroll
   for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
     const int other_thread_count =
-        __shfl_up_sync(0xffffffff, in_warp_inclusive_offset, pass_offset);
+        __shfl_up_sync(0xffffffffu, in_warp_inclusive_offset, pass_offset);
     if (lane_id >= pass_offset) {
       in_warp_inclusive_offset += other_thread_count;
     }
@@ -223,7 +223,7 @@ __device__ void newline_index_sharemem(const char *file, int fileSize,
   const int in_warp_exclusive_offset =
       in_warp_inclusive_offset - in_thread_count;
   const int in_warp_num_newlines =
-      __shfl_sync(0xffffffff, in_warp_inclusive_offset, WARP_SIZE - 1);
+      __shfl_sync(0xffffffffu, in_warp_inclusive_offset, WARP_SIZE - 1);
 
   if (lane_id == WARP_SIZE - 1) {
     per_warp_totals[warp_id] = in_warp_num_newlines;
@@ -237,7 +237,7 @@ __device__ void newline_index_sharemem(const char *file, int fileSize,
 #pragma unroll
     for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
       const int other_warp_count =
-          __shfl_up_sync(0xffffffff, per_warp_inclusive_offset, pass_offset);
+          __shfl_up_sync(0xffffffffu, per_warp_inclusive_offset, pass_offset);
       if (lane_id >= pass_offset) {
         per_warp_inclusive_offset += other_warp_count;
       }
@@ -378,7 +378,7 @@ newline_index_sharemem_transposed(const char *file, int fileSize,
 #pragma unroll
   for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
     const int other_thread_count =
-        __shfl_up_sync(0xffffffff, in_warp_inclusive_offset, pass_offset);
+        __shfl_up_sync(0xffffffffu, in_warp_inclusive_offset, pass_offset);
     if (lane_id >= pass_offset) {
       in_warp_inclusive_offset += other_thread_count;
     }
@@ -387,7 +387,7 @@ newline_index_sharemem_transposed(const char *file, int fileSize,
   const int in_warp_exclusive_offset =
       in_warp_inclusive_offset - in_thread_count;
   const int in_warp_num_newlines =
-      __shfl_sync(0xffffffff, in_warp_inclusive_offset, WARP_SIZE - 1);
+      __shfl_sync(0xffffffffu, in_warp_inclusive_offset, WARP_SIZE - 1);
 
   if (lane_id == WARP_SIZE - 1) {
     per_warp_totals[warp_id] = in_warp_num_newlines;
@@ -402,7 +402,7 @@ newline_index_sharemem_transposed(const char *file, int fileSize,
 #pragma unroll
     for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
       const int other_warp_count =
-          __shfl_up_sync(0xffffffff, per_warp_inclusive_offset, pass_offset);
+          __shfl_up_sync(0xffffffffu, per_warp_inclusive_offset, pass_offset);
       if (lane_id >= pass_offset) {
         per_warp_inclusive_offset += other_warp_count;
       }
@@ -552,7 +552,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
 #pragma unroll
   for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
     const int other_thread_count =
-        __shfl_up_sync(0xffffffff, in_warp_inclusive_offset, pass_offset);
+        __shfl_up_sync(0xffffffffu, in_warp_inclusive_offset, pass_offset);
     if (lane_id >= pass_offset) {
       in_warp_inclusive_offset += other_thread_count;
     }
@@ -561,7 +561,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
   const int in_warp_exclusive_offset =
       in_warp_inclusive_offset - in_thread_count;
   const int in_warp_num_newlines =
-      __shfl_sync(0xffffffff, in_warp_inclusive_offset, WARP_SIZE - 1);
+      __shfl_sync(0xffffffffu, in_warp_inclusive_offset, WARP_SIZE - 1);
 
   if (lane_id == WARP_SIZE - 1) {
     per_warp_totals[warp_id] = in_warp_num_newlines;
@@ -575,7 +575,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
 #pragma unroll
     for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
       const int other_warp_count =
-          __shfl_up_sync(0xffffffff, per_warp_inclusive_offset, pass_offset);
+          __shfl_up_sync(0xffffffffu, per_warp_inclusive_offset, pass_offset);
       if (lane_id >= pass_offset) {
         per_warp_inclusive_offset += other_warp_count;
       }
@@ -614,6 +614,131 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
   }
 }
 
+/**
+ * This kernel utilize warp-level primitives of __ballot_sync and __popc to
+ * efficiently compute newline index without storing file bytes into shared
+ * memory
+ *
+ * We use __ballot_sync to check if cur byte is newline in a warp, and use
+ * __popc to compute total number of newline in a warp, and use __popc with a
+ * mask to compute rank (local index) of newline of a lane.
+ */
+__device__ void newline_index_sharemem_ballot(const char *file, int fileSize,
+                                              int *perTileNewlineOffsetIndex,
+                                              long *newlineIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+  constexpr int CHUNK_SIZE = 32768; // 512 * 64
+
+  Check(CHUNK_SIZE == BYTES_PER_THREAD * THREADS_PER_BLOCK,
+        "Invalid choice of kernel config.");
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int WARP_SIZE = 32;
+  constexpr int WARPS_PER_BLOCK = THREADS_PER_BLOCK / WARP_SIZE;
+  constexpr int BYTES_PER_WARP = BYTES_PER_THREAD * WARP_SIZE; // 2048
+  constexpr int ROUNDS_PER_WARP = BYTES_PER_WARP / WARP_SIZE;  // 64
+  constexpr unsigned FULL_MASK = 0xffffffffu;
+
+  static_assert(THREADS_PER_BLOCK % WARP_SIZE == 0);
+  static_assert(BYTES_PER_WARP * WARPS_PER_BLOCK == CHUNK_SIZE);
+  static_assert(ROUNDS_PER_WARP == BYTES_PER_THREAD);
+
+  const int tid = threadIdx.x;
+  const int tile_idx = blockIdx.x;
+  const int block_start = tile_idx * CHUNK_SIZE;
+  const int tile_offset = perTileNewlineOffsetIndex[tile_idx];
+
+  const int lane_id = tid % WARP_SIZE;
+  const int warp_id = tid / WARP_SIZE;
+
+  // printf("Shared memory usage: \n");
+  // printf("- warp_round_bitmaps: %d bytes\n",
+  //        WARPS_PER_BLOCK * ROUNDS_PER_WARP * sizeof(unsigned int));
+  // printf("- per_warp_totals: %d bytes\n", WARPS_PER_BLOCK * sizeof(int));
+  // printf("- per_warp_offsets: %d bytes\n", WARPS_PER_BLOCK * sizeof(int));
+
+  // One 32-bit bitmap per warp per round. Bit l is set iff lane l saw '\n'
+  // in that round.
+  // warp_round_bitmaps[warp_id][round] stores the is_newline bitmap of each
+  // warp in each round
+  __shared__ unsigned int warp_round_bitmaps[WARPS_PER_BLOCK * ROUNDS_PER_WARP];
+  __shared__ int per_warp_totals[WARPS_PER_BLOCK];
+  __shared__ int per_warp_offsets[WARPS_PER_BLOCK];
+
+  const int warp_global_base = block_start + warp_id * BYTES_PER_WARP;
+
+  // First pass:
+  // - each warp scans its 2048-byte region in 64 rounds
+  // - stores one bitmap per round
+  // - accumulates one total newline count per warp
+  int warp_total = 0;
+
+  for (int round = 0; round < ROUNDS_PER_WARP; ++round) {
+    const int global_idx = warp_global_base + round * WARP_SIZE + lane_id;
+    const bool is_newline = (global_idx < fileSize && file[global_idx] == '\n');
+
+    const unsigned int bitmap = __ballot_sync(FULL_MASK, is_newline);
+
+    if (lane_id == 0) {
+      warp_round_bitmaps[warp_id * ROUNDS_PER_WARP + round] = bitmap;
+      warp_total += __popc(bitmap);
+    }
+  }
+
+  if (lane_id == 0) {
+    per_warp_totals[warp_id] = warp_total;
+  }
+  __syncthreads();
+
+  // Warp 0 scans per-warp totals to get per-warp offsets within the block.
+  if (warp_id == 0) {
+    int per_warp_inclusive_offset =
+        (lane_id < WARPS_PER_BLOCK) ? per_warp_totals[lane_id] : 0;
+
+#pragma unroll
+    for (int pass_offset = 1; pass_offset < WARP_SIZE; pass_offset <<= 1) {
+      const int other_warp_count =
+          __shfl_up_sync(FULL_MASK, per_warp_inclusive_offset, pass_offset);
+      if (lane_id >= pass_offset) {
+        per_warp_inclusive_offset += other_warp_count;
+      }
+    }
+
+    if (lane_id < WARPS_PER_BLOCK) {
+      per_warp_offsets[lane_id] =
+          per_warp_inclusive_offset - per_warp_totals[lane_id];
+    }
+  }
+  __syncthreads();
+
+  // Second pass:
+  // Replay the stored bitmaps. Each warp writes into its own disjoint segment:
+  //   tile_offset + per_warp_offsets[warp_id] + [0, per_warp_totals[warp_id))
+  int warp_running_offset = 0;
+
+  for (int round = 0; round < ROUNDS_PER_WARP; ++round) {
+    const unsigned int bitmap =
+        warp_round_bitmaps[warp_id * ROUNDS_PER_WARP + round];
+    const int round_count = __popc(bitmap);
+
+    const bool is_newline = ((bitmap >> lane_id) & 1u) != 0u;
+    if (is_newline) {
+      const unsigned int lower_lane_mask =
+          (lane_id == 0) ? 0u : ((1u << lane_id) - 1u);
+      const int rank_in_round = __popc(bitmap & lower_lane_mask);
+
+      const int global_idx = warp_global_base + round * WARP_SIZE + lane_id;
+      newlineIndex[tile_offset + per_warp_offsets[warp_id] +
+                   warp_running_offset + rank_in_round + 1] =
+          static_cast<long>(global_idx);
+    }
+
+    warp_running_offset += round_count;
+  }
+}
+
 __global__ void newline_index(const char *file, int fileSize,
                               int *perTileNewlineOffsetIndex,
                               long *newlineIndex) {
@@ -629,6 +754,9 @@ __global__ void newline_index(const char *file, int fileSize,
 
   newline_index_sharemem_transposed_packed(
       file, fileSize, perTileNewlineOffsetIndex, newlineIndex);
+
+  newline_index_sharemem_ballot(file, fileSize, perTileNewlineOffsetIndex,
+                                newlineIndex);
 }
 
 } // namespace gpjson::index::kernels::sharemem
