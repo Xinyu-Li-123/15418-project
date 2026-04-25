@@ -1,7 +1,7 @@
 namespace gpjson::index::kernels::sharemem {
 
 __global__ void newline_count_index(const char *file, int fileSize,
-                                    int *newlineCountIndex);
+                                    int *perTileNewlineCountIndex);
 
 __global__ void combined_escape_carry_newline_count_index(const char *file,
                                                           int fileSize,
@@ -17,7 +17,8 @@ __global__ void int_sum_rebase(int *intArr, int n, int *base, int offset,
                                int *intNewArr);
 
 __global__ void newline_index(const char *file, int fileSize,
-                              int *newlineCountIndex, long *newlineIndex);
+                              int *perTileNewlineCountIndex,
+                              long *newlineIndex);
 
 __global__ void combined_escape_newline_index(const char *file, int fileSize,
                                               char *escapeCarryIndex,

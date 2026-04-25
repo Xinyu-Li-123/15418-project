@@ -42,6 +42,6 @@ private:
 
 void check(cudaError_t status, const char *context);
 bool device_available();
-void synchronize();
+void synchronize_and_check();
 
 } // namespace gpjson::cuda

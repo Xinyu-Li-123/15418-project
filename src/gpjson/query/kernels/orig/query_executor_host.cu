@@ -205,7 +205,7 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
             built_indices.get_leveled_bitmap_index().data()),
         level_size, num_results, device_result.as<int>());
     cuda::check(cudaGetLastError(), "execute_query_kernel launch");
-    cuda::synchronize();
+    cuda::synchronize_and_check();
 
     std::vector<int> host_result_buffer(host_result_count, -1);
     device_result.copy_to_host(host_result_buffer.data(),

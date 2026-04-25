@@ -119,7 +119,7 @@ bool device_available() {
   return false;
 }
 
-void synchronize() {
+void synchronize_and_check() {
   check(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
   check(cudaGetLastError(), "cudaGetLastError");
 }
