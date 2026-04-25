@@ -190,6 +190,8 @@ inline void run_char_sum_scan(const OrigIndexBuilderContext &ctx,
                               cuda::DeviceArray &carry_index_mem,
                               cuda::DeviceArray &carry_index_with_offset_mem,
                               profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId char_sum_scan_timer =
+      profiler.begin_nested("char_sum_scan (orig)");
   cuda::DeviceArray char_sum_base_mem(ctx.reduction_grid_size *
                                       ctx.reduction_block_size * sizeof(char));
   const int scan_stride = reduction_scan_stride(ctx);
@@ -218,6 +220,7 @@ inline void run_char_sum_scan(const OrigIndexBuilderContext &ctx,
           carry_index_with_offset_mem.as<char>());
   cuda::synchronize_and_check();
   profiler.end(char_sum_rebase_timer);
+  profiler.end(char_sum_scan_timer);
 }
 
 NewlineStringIndices
