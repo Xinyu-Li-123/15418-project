@@ -56,9 +56,9 @@ __global__ void char_sum_post_scan(char *charArr, int n, int stride,
 __global__ void char_sum_rebase(char *charArr, int n, char *base, int offset,
                                 char *charNewArr);
 
-__global__ void leveled_bitmaps_index(const char *file, int fileSize,
-                                      const long *stringIndex,
-                                      char *leveledBitmapsAuxIndex,
-                                      long *leveledBitmapsIndex, int levelSize,
-                                      int numLevels);
+void launch_leveled_bitmaps_index(const char *file, int fileSize,
+                                  const long *stringIndex,
+                                  char *leveledBitmapsAuxIndex,
+                                  long *leveledBitmapsIndex, int levelSize,
+                                  int numLevels, int gridSize, int blockSize);
 } // namespace gpjson::index::kernels::sharemem

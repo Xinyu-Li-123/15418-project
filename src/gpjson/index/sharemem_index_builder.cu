@@ -413,11 +413,13 @@ create_leveled_bitmap_index(const SharememIndexBuilderContext &ctx,
   leveled_bitmap_index_mem.memset(0);
   const profiler::Profiler::SegmentId leveled_bitmaps_index_timer =
       profiler.begin("leveled_bitmaps_index");
-  kernels::sharemem::leveled_bitmaps_index<<<ctx.grid_size, ctx.block_size>>>(
+  LogInfo("max depth: %d", ctx.max_depth);
+  kernels::sharemem::launch_leveled_bitmaps_index(
       ctx.device_file(), ctx.file_size,
       static_cast<const long *>(string_index.data()),
       carry_index_with_offset_mem.as<char>(),
-      leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth);
+      leveled_bitmap_index_mem.as<long>(), ctx.level_size(), ctx.max_depth,
+      ctx.grid_size, ctx.block_size);
   cuda::synchronize_and_check();
   profiler.end(leveled_bitmaps_index_timer);
   profiler.end(leveled_bitmap_related_timer);

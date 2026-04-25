@@ -65,11 +65,11 @@ GPJSON_DEFINE_ACCUM(7)
 GPJSON_DEFINE_ACCUM(8)
 
 template <int NumLevels>
-__device__ void leveled_bitmaps_index_smem_impl(const char *file, int fileSize,
-                                                const long *stringIndex,
-                                                char *leveledBitmapsAuxIndex,
-                                                long *leveledBitmapsIndex,
-                                                int levelSize) {
+__global__ void leveled_bitmaps_index_smem(const char *file, int fileSize,
+                                           const long *stringIndex,
+                                           char *leveledBitmapsAuxIndex,
+                                           long *leveledBitmapsIndex,
+                                           int levelSize) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
@@ -204,59 +204,7 @@ __device__ void leveled_bitmaps_index_smem_impl(const char *file, int fileSize,
   }
 }
 
-__device__ void leveled_bitmaps_index_smem_dispatch(
-    const char *file, int fileSize, const long *stringIndex,
-    char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex, int levelSize,
-    int numLevels) {
-  switch (numLevels) {
-  case 1:
-    leveled_bitmaps_index_smem_impl<1>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 2:
-    leveled_bitmaps_index_smem_impl<2>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 3:
-    leveled_bitmaps_index_smem_impl<3>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 4:
-    leveled_bitmaps_index_smem_impl<4>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 5:
-    leveled_bitmaps_index_smem_impl<5>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 6:
-    leveled_bitmaps_index_smem_impl<6>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 7:
-    leveled_bitmaps_index_smem_impl<7>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  case 8:
-    leveled_bitmaps_index_smem_impl<8>(file, fileSize, stringIndex,
-                                       leveledBitmapsAuxIndex,
-                                       leveledBitmapsIndex, levelSize);
-    break;
-  default:
-    break;
-  }
-}
-
-} // namespace
-
-__device__ void leveled_bitmaps_index_default(const char *file, int fileSize,
+__global__ void leveled_bitmaps_index_default(const char *file, int fileSize,
                                               const long *stringIndex,
                                               char *leveledBitmapsAuxIndex,
                                               long *leveledBitmapsIndex,
@@ -319,22 +267,39 @@ __device__ void leveled_bitmaps_index_default(const char *file, int fileSize,
   }
 }
 
-__global__ void leveled_bitmaps_index(const char *file, int fileSize,
-                                      const long *stringIndex,
-                                      char *leveledBitmapsAuxIndex,
-                                      long *leveledBitmapsIndex, int levelSize,
-                                      int numLevels) {
+} // namespace
+
+void launch_leveled_bitmaps_index(const char *file, int fileSize,
+                                  const long *stringIndex,
+                                  char *leveledBitmapsAuxIndex,
+                                  long *leveledBitmapsIndex, int levelSize,
+                                  int numLevels, int gridSize, int blockSize) {
   assert(numLevels <= kMaxNumLevels);
 
-  if (numLevels >= 1 && numLevels <= MAX_NUM_LEVEL_SMEM) {
-    leveled_bitmaps_index_smem_dispatch(
+#define GPJSON_LAUNCH_SMEM_CASE(NUM_LEVELS)                                   \
+  case NUM_LEVELS:                                                             \
+    leveled_bitmaps_index_smem<NUM_LEVELS><<<gridSize, blockSize>>>(           \
+        file, fileSize, stringIndex, leveledBitmapsAuxIndex,                   \
+        leveledBitmapsIndex, levelSize);                                       \
+    break;
+
+  switch (numLevels) {
+    GPJSON_LAUNCH_SMEM_CASE(1)
+    GPJSON_LAUNCH_SMEM_CASE(2)
+    GPJSON_LAUNCH_SMEM_CASE(3)
+    GPJSON_LAUNCH_SMEM_CASE(4)
+    GPJSON_LAUNCH_SMEM_CASE(5)
+    GPJSON_LAUNCH_SMEM_CASE(6)
+    GPJSON_LAUNCH_SMEM_CASE(7)
+    GPJSON_LAUNCH_SMEM_CASE(8)
+  default:
+    leveled_bitmaps_index_default<<<gridSize, blockSize>>>(
         file, fileSize, stringIndex, leveledBitmapsAuxIndex,
         leveledBitmapsIndex, levelSize, numLevels);
-  } else {
-    leveled_bitmaps_index_default(file, fileSize, stringIndex,
-                                  leveledBitmapsAuxIndex, leveledBitmapsIndex,
-                                  levelSize, numLevels);
+    break;
   }
+
+#undef GPJSON_LAUNCH_SMEM_CASE
 }
 
 #undef GPJSON_DEFINE_ACCUM
