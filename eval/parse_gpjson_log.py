@@ -44,6 +44,7 @@ class TimingRecord:
     source_file: str
     run_index: int
     run_name: str
+    sequence_index: int
     partition_id: int | None
     indent_level: int
     segment: str
@@ -135,6 +136,7 @@ def parse_log(path: Path) -> tuple[list[RunRecord], list[TimingRecord]]:
                         source_file=str(path),
                         run_index=current_run_index,
                         run_name=name,
+                        sequence_index=len(timings),
                         partition_id=partition_id,
                         indent_level=indent_level,
                         segment=segment,
@@ -235,12 +237,129 @@ def partition_timing_summary(timings_df: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
+def hierarchical_timing_summary(
+    timings_df: pd.DataFrame, max_indent_level: int
+) -> pd.DataFrame:
+    if timings_df.empty:
+        return pd.DataFrame()
+
+    rows_by_path: dict[tuple[str, ...], dict[str, Any]] = {}
+    path_order: list[tuple[str, ...]] = []
+    run_names: list[str] = []
+    sorted_timings = timings_df.sort_values(
+        ["source_file", "run_index", "sequence_index"]
+    )
+
+    for _, group in sorted_timings.groupby(["source_file", "run_index"], sort=False):
+        records = group.to_dict("records")
+        run_name = str(records[0]["run_name"])
+        if run_name not in run_names:
+            run_names.append(run_name)
+
+        children: dict[int, list[int]] = {index: [] for index in range(len(records))}
+        roots: list[int] = []
+        stack: dict[int, int] = {}
+
+        for index in range(len(records) - 1, -1, -1):
+            indent_level = int(records[index]["indent_level"])
+            parent_index = stack.get(indent_level - 1)
+            if parent_index is None:
+                roots.append(index)
+            else:
+                children[parent_index].append(index)
+
+            for stack_indent in list(stack):
+                if stack_indent >= indent_level:
+                    del stack[stack_indent]
+            stack[indent_level] = index
+
+        def emit(index: int, path: tuple[str, ...], depth: int) -> None:
+            record = records[index]
+            indent_level = int(record["indent_level"])
+            segment = str(record["segment"])
+            current_path = (*path, segment)
+
+            if indent_level <= max_indent_level:
+                if current_path not in rows_by_path:
+                    path_order.append(current_path)
+                    rows_by_path[current_path] = {
+                        "hierarchy": hierarchy_label(segment, depth)
+                    }
+                row = rows_by_path[current_path]
+                row[run_name] = row.get(run_name, 0.0) + record["elapsed_ms"]
+
+            child_indices = sorted(
+                children[index], key=lambda child: records[child]["sequence_index"]
+            )
+            for child_index in child_indices:
+                emit(child_index, current_path, depth + 1)
+
+        root_indices = sorted(roots, key=lambda root: records[root]["sequence_index"])
+        for root_index in root_indices:
+            emit(root_index, (), 0)
+
+    rows = [rows_by_path[path] for path in path_order]
+    if not rows:
+        return pd.DataFrame(columns=["hierarchy", *run_names])
+
+    summary = pd.DataFrame(rows)
+    for run_name in run_names:
+        if run_name not in summary.columns:
+            summary[run_name] = pd.NA
+    return summary[["hierarchy", *run_names]]
+
+
+def hierarchy_label(segment: str, depth: int) -> str:
+    if depth == 0:
+        return segment
+
+    return f"{'  ' * (depth - 1)}+-- {segment}"
+
+
+def print_hierarchical_timing_summary(summary: pd.DataFrame) -> None:
+    if summary.empty:
+        print("No timing records.")
+        return
+
+    run_names = [column for column in summary.columns if column != "hierarchy"]
+    formatted_rows: list[dict[str, str]] = []
+    for _, row in summary.iterrows():
+        formatted_row = {"hierarchy": str(row["hierarchy"])}
+        for run_name in run_names:
+            value = row[run_name]
+            formatted_row[run_name] = "" if pd.isna(value) else f"{value:.3f}"
+        formatted_rows.append(formatted_row)
+
+    hierarchy_width = max(
+        len("hierarchy"), *(len(row["hierarchy"]) for row in formatted_rows)
+    )
+    run_widths = {
+        run_name: max(
+            len(run_name), *(len(row[run_name]) for row in formatted_rows)
+        )
+        for run_name in run_names
+    }
+
+    header = "hierarchy".ljust(hierarchy_width)
+    for run_name in run_names:
+        header += f"  {run_name.rjust(run_widths[run_name])}"
+    print(header)
+
+    for row in formatted_rows:
+        line = row["hierarchy"].ljust(hierarchy_width)
+        for run_name in run_names:
+            line += f"  {row[run_name].rjust(run_widths[run_name])}"
+        print(line)
+
+
 def print_section(title: str) -> None:
     print(f"\n{title}")
     print("=" * len(title))
 
 
-def print_report(runs_df: pd.DataFrame, timings_df: pd.DataFrame) -> None:
+def print_report(
+    runs_df: pd.DataFrame, timings_df: pd.DataFrame, max_indent_level: int
+) -> None:
     print_section("Runs")
     if runs_df.empty:
         print("No runs found.")
@@ -280,9 +399,26 @@ def print_report(runs_df: pd.DataFrame, timings_df: pd.DataFrame) -> None:
     else:
         print(partition_summary.to_string(index=False))
 
+    print_section("Hierarchical Timings")
+    hierarchical_summary = hierarchical_timing_summary(timings_df, max_indent_level)
+    print_hierarchical_timing_summary(hierarchical_summary)
+
+
+def non_negative_int(value: str) -> int:
+    parsed_value = int(value)
+    if parsed_value < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed_value
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Parse gpjson profiler logs.")
+    parser.add_argument(
+        "--max-indent-level",
+        type=non_negative_int,
+        default=2,
+        help="Maximum inclusive profiler indent level to print.",
+    )
     parser.add_argument("logs", nargs="+", type=Path, help="Log files to parse.")
     return parser.parse_args()
 
@@ -298,7 +434,7 @@ def main() -> int:
         timings.extend(parsed_timings)
 
     runs_df, timings_df = records_to_dataframes(runs, timings)
-    print_report(runs_df, timings_df)
+    print_report(runs_df, timings_df, args.max_indent_level)
     return 0
 
 
