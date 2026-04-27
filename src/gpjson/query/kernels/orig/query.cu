@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <cstddef>
+#include <cstdint>
 
 namespace gpjson::query::kernels::orig {
 
@@ -30,41 +31,100 @@ namespace {
 #define OPCODE_RESET_POSITION 0x08
 #define OPCODE_EXPRESSION_STRING_EQUALS 0x09
 
-__device__ int find_next_structural_char(const long *ext_index, int level_end,
-                                         int line_index, int current_level,
-                                         int level_size) {
-  long index = ext_index[level_size * current_level + line_index / 64];
-  while (index == 0 && line_index < level_end) {
-    line_index += 64 - (line_index % 64);
-    index = ext_index[level_size * current_level + line_index / 64];
-  }
-
-  bool is_structural = (index & (1L << (line_index % 64))) != 0;
-  while (!is_structural && line_index < level_end) {
-    ++line_index;
-    index = ext_index[level_size * current_level + line_index / 64];
-    is_structural = (index & (1L << (line_index % 64))) != 0;
-  }
-  return line_index;
+__device__ __forceinline__ uint64_t mask_through_bit(const int bit_offset) {
+  return bit_offset == 63 ? ~uint64_t{0}
+                          : ((uint64_t{1} << (bit_offset + 1)) - 1);
 }
 
-__device__ int find_previous_structural_char(const long *ext_index,
-                                             int level_start, int line_index,
-                                             int current_level,
-                                             int level_size) {
-  long index = ext_index[level_size * current_level + line_index / 64];
-  while (index == 0 && line_index > level_start) {
-    line_index -= 64 - (line_index % 64);
-    index = ext_index[level_size * current_level + line_index / 64];
+__device__ __forceinline__ int find_previous_bitmap_bit(const long *bitmap,
+                                                        int min_index,
+                                                        int line_index) {
+  if (line_index < min_index) {
+    return -1;
   }
 
-  bool is_structural = (index & (1L << (line_index % 64))) != 0;
-  while (!is_structural && line_index > level_start) {
-    --line_index;
-    index = ext_index[level_size * current_level + line_index / 64];
-    is_structural = (index & (1L << (line_index % 64))) != 0;
+  int word_index = line_index / 64;
+  int word_base = word_index * 64;
+  uint64_t word = static_cast<uint64_t>(bitmap[word_index]);
+  word &= mask_through_bit(line_index - word_base);
+
+  while (word_base + 63 >= min_index) {
+    uint64_t candidate = word;
+    const int first_bit = min_index - word_base;
+    if (first_bit > 0) {
+      candidate &= ~mask_through_bit(first_bit - 1);
+    }
+
+
+    // __clzll returns the number of zeros before the first set bit, so 63 - __clzll returns the index of the last set bit.
+    if (candidate != 0) {
+      return word_base + 63 -
+             __clzll(static_cast<unsigned long long>(candidate));
+    }
+
+    if (word_index == 0) {
+      break;
+    }
+    --word_index;
+    word_base -= 64;
+    if (word_base + 63 < min_index) {
+      break;
+    }
+    word = static_cast<uint64_t>(bitmap[word_index]);
   }
-  return line_index;
+
+  return -1;
+}
+
+__device__ __forceinline__ int
+find_next_structural_char(const long *ext_index, int level_end, int line_index,
+                          int current_level, int level_size) {
+  if (line_index >= level_end) {
+    return level_end;
+  }
+
+  const long *level_index = ext_index + level_size * current_level;
+  int word_index = line_index / 64;
+  int word_base = word_index * 64;
+  uint64_t word = static_cast<uint64_t>(level_index[word_index]);
+  word &= ~uint64_t{0} << (line_index - word_base);
+
+  while (word_base <= level_end) {
+    uint64_t candidate = word;
+    const int last_bit = level_end - word_base;
+    if (last_bit < 63) {
+      //keep only bits through last_bit(this level)
+      candidate &= mask_through_bit(last_bit);
+    }
+
+    // __ffsll returns the index of the first set bit.
+    if (candidate != 0) {
+      return word_base +
+             __ffsll(static_cast<long long>(candidate)) - 1;
+    }
+
+    ++word_index;
+    word_base += 64;
+    if (word_base > level_end) {
+      break;
+    }
+    word = static_cast<uint64_t>(level_index[word_index]);
+  }
+
+  return level_end;
+}
+
+__device__ __forceinline__ int find_previous_structural_char(
+    const long *ext_index, int level_start, int line_index, int current_level,
+    int level_size) {
+  if (line_index <= level_start) {
+    return level_start;
+  }
+
+  const long *level_index = ext_index + level_size * current_level;
+  const int structural_index =
+      find_previous_bitmap_bit(level_index, level_start, line_index);
+  return structural_index == -1 ? level_start : structural_index;
 }
 
 __device__ int read_varint(int *query_pos) {
@@ -181,22 +241,9 @@ __global__ void query(const char *file, int file_size,
       case OPCODE_MOVE_DOWN:
         ++current_level;
         if (level_end[current_level] == -1) {
-          for (int end_candidate = line_index + 1;
-               end_candidate <= level_end[current_level - 1]; ++end_candidate) {
-            const long index =
-                leveled_bitmaps_index[level_size * (current_level - 1) +
-                                      end_candidate / 64];
-            if (index == 0) {
-              end_candidate += 64 - (end_candidate % 64) - 1;
-              continue;
-            }
-            const bool is_structural =
-                (index & (1L << (end_candidate % 64))) != 0;
-            if (is_structural) {
-              level_end[current_level] = end_candidate;
-              break;
-            }
-          }
+          level_end[current_level] = find_next_structural_char(
+              leveled_bitmaps_index, level_end[current_level - 1],
+              line_index + 1, current_level - 1, level_size);
           assert(level_end[current_level] != -1);
           while (file[line_index] == ' ') {
             ++line_index;
@@ -217,15 +264,8 @@ __global__ void query(const char *file, int file_size,
               current_level, level_size);
           assert(file[line_index] == ':' || file[line_index] == '}');
           if (file[line_index] == ':') {
-            int string_end = -1;
-            for (int end_candidate = line_index - 1; end_candidate > line_start;
-                 --end_candidate) {
-              if ((string_index[end_candidate / 64] &
-                   (1L << (end_candidate % 64))) != 0) {
-                string_end = end_candidate;
-                break;
-              }
-            }
+            const int string_end = find_previous_bitmap_bit(
+                string_index, line_start + 1, line_index - 1);
 
             const int string_start = string_end - key_len;
             if (string_start < line_start || file[string_start] != '"') {
