@@ -225,8 +225,6 @@ NewlineStringIndices
 create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
                                            profiler::Profiler &profiler) {
   LogInfo("Create newline and string index, combined=0");
-  const profiler::Profiler::SegmentId total_timer =
-      profiler.begin_nested("create_newline_and_string_index");
 
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
@@ -292,7 +290,6 @@ create_uncombined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
-  profiler.end(total_timer);
   return {std::move(newline_index), std::move(string_index)};
 }
 
@@ -300,8 +297,6 @@ NewlineStringIndices
 create_combined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
                                          profiler::Profiler &profiler) {
   LogInfo("Create newline and string index, combined=1");
-  const profiler::Profiler::SegmentId total_timer =
-      profiler.begin_nested("create_newline_and_string_index");
 
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
@@ -355,7 +350,6 @@ create_combined_newline_and_string_index(const OrigIndexBuilderContext &ctx,
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
   StringIndex string_index(std::move(string_index_mem));
-  profiler.end(total_timer);
   return {std::move(newline_index), std::move(string_index)};
 }
 
@@ -364,9 +358,6 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
                             const StringIndex &string_index,
                             profiler::Profiler &profiler) {
   LogInfo("Create leveled bitmap index");
-  const profiler::Profiler::SegmentId total_timer =
-      profiler.begin_nested("create_leveled_bitmap_index");
-
   const profiler::Profiler::SegmentId leveled_bitmap_related_timer =
       profiler.begin_nested("leveled_bitmap related kernels");
 
@@ -400,7 +391,6 @@ create_leveled_bitmap_index(const OrigIndexBuilderContext &ctx,
   cuda::synchronize_and_check();
   profiler.end(leveled_bitmaps_index_timer);
   profiler.end(leveled_bitmap_related_timer);
-  profiler.end(total_timer);
   return LeveledBitmapIndex(std::move(leveled_bitmap_index_mem), ctx.max_depth);
 }
 } // namespace
