@@ -8,7 +8,6 @@
 #include "gpjson/query/query_executor.hpp"
 #include "gpjson/run_context.hpp"
 
-#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -99,7 +98,6 @@ query::MaterializedBatchResult
 Engine::query(const std::string &file_path,
               const std::vector<std::string> &queries_src,
               const EngineOptions &options) const {
-  std::cout << "Engine::query options: " << options << '\n';
   if (queries_src.empty()) {
     return {};
   }

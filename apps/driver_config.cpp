@@ -11,12 +11,15 @@
 #include <toml++/toml.hpp>
 
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
@@ -49,6 +52,75 @@ std::string option_names(std::string_view key,
     names += to_cli_option_name(alias);
   }
   return names;
+}
+
+std::string generate_run_name() {
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  const auto millis =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+  return "run_" + std::to_string(millis);
+}
+
+std::string json_escape(std::string_view text) {
+  std::string escaped;
+  escaped.reserve(text.size() + 2);
+  for (const char c : text) {
+    switch (c) {
+    case '"':
+      escaped += "\\\"";
+      break;
+    case '\\':
+      escaped += "\\\\";
+      break;
+    case '\b':
+      escaped += "\\b";
+      break;
+    case '\f':
+      escaped += "\\f";
+      break;
+    case '\n':
+      escaped += "\\n";
+      break;
+    case '\r':
+      escaped += "\\r";
+      break;
+    case '\t':
+      escaped += "\\t";
+      break;
+    default:
+      if (static_cast<unsigned char>(c) < 0x20) {
+        std::ostringstream stream;
+        stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+               << static_cast<int>(static_cast<unsigned char>(c));
+        escaped += stream.str();
+      } else {
+        escaped.push_back(c);
+      }
+      break;
+    }
+  }
+  return escaped;
+}
+
+std::string json_string(std::string_view text) {
+  return "\"" + json_escape(text) + "\"";
+}
+
+template <class Enum> std::string enum_to_json_string(Enum value) {
+  return json_string(std::string(magic_enum::enum_name(value)));
+}
+
+std::string queries_to_json(const std::vector<std::string> &queries) {
+  std::ostringstream stream;
+  stream << "[";
+  for (size_t i = 0; i < queries.size(); ++i) {
+    if (i > 0) {
+      stream << ",";
+    }
+    stream << json_string(queries[i]);
+  }
+  stream << "]";
+  return stream.str();
 }
 
 template <class T>
@@ -220,6 +292,7 @@ void bind_query_executor_options(Binder &binder,
 
 template <class Binder>
 void bind_driver_inputs(Binder &binder, DriverInputs &inputs) {
+  binder.value("run_name", inputs.run_name);
   binder.value("dataset_path", inputs.dataset_path, {"dataset"});
   binder.list("queries", inputs.queries, {"query", "q"});
   bind_file_reader_options(binder, inputs.engine_options.file_reader_options);
@@ -250,7 +323,11 @@ const char *CliExit::what() const noexcept { return "CLI requested exit"; }
 
 int CliExit::exit_code() const noexcept { return exit_code_; }
 
-DriverInputs default_driver_inputs() { return DriverInputs{}; }
+DriverInputs default_driver_inputs() {
+  DriverInputs inputs;
+  inputs.run_name = generate_run_name();
+  return inputs;
+}
 
 DriverInputs parse_driver_inputs(int argc, char **argv) {
   std::optional<std::filesystem::path> config_path =
@@ -282,6 +359,10 @@ DriverInputs parse_driver_inputs(int argc, char **argv) {
 }
 
 void validate_driver_inputs(const DriverInputs &inputs) {
+  if (inputs.run_name.empty()) {
+    throw std::runtime_error("run_name must not be empty.");
+  }
+
   if (inputs.dataset_path.empty()) {
     throw std::runtime_error("dataset_path is required. Use --dataset or set "
                              "dataset_path in the TOML config.");
@@ -305,6 +386,45 @@ void validate_driver_inputs(const DriverInputs &inputs) {
     throw std::runtime_error(
         "Query executor grid and block sizes must be non-negative.");
   }
+}
+
+std::string engine_options_to_json(const gpjson::EngineOptions &options) {
+  std::ostringstream stream;
+  const auto &file_reader = options.file_reader_options;
+  const auto &index_builder = options.index_builder_options;
+  const auto &query_executor = options.query_executor_options;
+
+  stream << "{";
+  stream << "\"file_reader\":{";
+  stream << "\"type\":" << enum_to_json_string(file_reader.file_reader_type);
+  stream << "},";
+  stream << "\"index_builder\":{";
+  stream << "\"type\":"
+         << enum_to_json_string(index_builder.index_builder_type);
+  stream << ",\"file_partition_size\":" << index_builder.file_partition_size;
+  stream << ",\"grid_size\":" << index_builder.grid_size;
+  stream << ",\"block_size\":" << index_builder.block_size;
+  stream << ",\"reduction_grid_size\":" << index_builder.reduction_grid_size;
+  stream << ",\"reduction_block_size\":" << index_builder.reduction_block_size;
+  stream << "},";
+  stream << "\"query_executor\":{";
+  stream << "\"grid_size\":" << query_executor.grid_size;
+  stream << ",\"block_size\":" << query_executor.block_size;
+  stream << "}";
+  stream << "}";
+  return stream.str();
+}
+
+std::string driver_inputs_to_json(const DriverInputs &inputs) {
+  std::ostringstream stream;
+  stream << "{";
+  stream << "\"run_name\":" << json_string(inputs.run_name);
+  stream << ",\"dataset_path\":" << json_string(inputs.dataset_path);
+  stream << ",\"queries\":" << queries_to_json(inputs.queries);
+  stream << ",\"engine_options\":"
+         << engine_options_to_json(inputs.engine_options);
+  stream << "}";
+  return stream.str();
 }
 
 } // namespace gpjson::driver
