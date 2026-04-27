@@ -328,18 +328,62 @@ def hierarchy_label(segment: str, depth: int) -> str:
     return f"{'  ' * (depth - 1)}+-- {segment}"
 
 
-def print_hierarchical_timing_summary(summary: pd.DataFrame) -> None:
+def compact_float(value: float, precision: int) -> str:
+    if abs(value) < 0.5 * 10**-precision:
+        value = 0.0
+    return f"{value:.{precision}f}".rstrip("0").rstrip(".")
+
+
+def format_timing_value(
+    value: Any, baseline_value: Any, relative_to_baseline: str
+) -> str:
+    if pd.isna(value):
+        return ""
+
+    formatted_value = f"{value:.3f}"
+    if relative_to_baseline == "none" or pd.isna(baseline_value):
+        return formatted_value
+
+    if relative_to_baseline == "speedup":
+        if value == 0:
+            if baseline_value == 0:
+                return f"{formatted_value} (1x)"
+            return f"{formatted_value} (infx)"
+        speedup = compact_float(baseline_value / value, 3)
+        return f"{formatted_value} ({speedup}x)"
+
+    if baseline_value == 0:
+        return formatted_value
+    reduction_percent = (value - baseline_value) / baseline_value * 100.0
+    reduction = compact_float(reduction_percent, 1)
+    if not reduction.startswith("-"):
+        reduction = f"+{reduction}"
+    return f"{formatted_value} ({reduction}%)"
+
+
+def print_hierarchical_timing_summary(
+    summary: pd.DataFrame, baseline_run: str | None, relative_to_baseline: str
+) -> None:
     if summary.empty:
         print("No timing records.")
         return
 
     run_names = [column for column in summary.columns if column != "hierarchy"]
+    selected_baseline = baseline_run or (run_names[0] if run_names else None)
+    if selected_baseline is not None and selected_baseline not in run_names:
+        raise ValueError(f"baseline run '{selected_baseline}' not found")
+
     formatted_rows: list[dict[str, str]] = []
     for _, row in summary.iterrows():
         formatted_row = {"hierarchy": str(row["hierarchy"])}
+        baseline_value = (
+            row[selected_baseline] if selected_baseline is not None else pd.NA
+        )
         for run_name in run_names:
             value = row[run_name]
-            formatted_row[run_name] = "" if pd.isna(value) else f"{value:.3f}"
+            formatted_row[run_name] = format_timing_value(
+                value, baseline_value, relative_to_baseline
+            )
         formatted_rows.append(formatted_row)
 
     hierarchy_width = max(
@@ -374,6 +418,8 @@ def print_report(
     timings_df: pd.DataFrame,
     max_indent_level: int,
     sum_partitions: bool,
+    baseline_run: str | None,
+    relative_to_baseline: str,
 ) -> None:
     print_section("Runs")
     if runs_df.empty:
@@ -421,7 +467,9 @@ def print_report(
     hierarchical_summary = hierarchical_timing_summary(
         timings_df, max_indent_level, sum_partitions
     )
-    print_hierarchical_timing_summary(hierarchical_summary)
+    print_hierarchical_timing_summary(
+        hierarchical_summary, baseline_run, relative_to_baseline
+    )
 
 
 def non_negative_int(value: str) -> int:
@@ -445,6 +493,19 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Sum matching hierarchical timing segments across partitions.",
     )
+    parser.add_argument(
+        "--baseline-run",
+        help="Run name to use as the baseline for relative timing annotations.",
+    )
+    parser.add_argument(
+        "--relative-to-baseline",
+        choices=("none", "speedup", "reduction"),
+        default="none",
+        help=(
+            "Annotate hierarchical timings relative to the baseline as speedup "
+            "or percent time reduction."
+        ),
+    )
     parser.add_argument("logs", nargs="+", type=Path, help="Log files to parse.")
     return parser.parse_args()
 
@@ -460,7 +521,14 @@ def main() -> int:
         timings.extend(parsed_timings)
 
     runs_df, timings_df = records_to_dataframes(runs, timings)
-    print_report(runs_df, timings_df, args.max_indent_level, args.sum_partitions)
+    print_report(
+        runs_df,
+        timings_df,
+        args.max_indent_level,
+        args.sum_partitions,
+        args.baseline_run,
+        args.relative_to_baseline,
+    )
     return 0
 
 
