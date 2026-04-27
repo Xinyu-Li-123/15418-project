@@ -298,7 +298,6 @@ def main() -> int:
         timings.extend(parsed_timings)
 
     runs_df, timings_df = records_to_dataframes(runs, timings)
-    breakpoint()
     print_report(runs_df, timings_df)
     return 0
 
