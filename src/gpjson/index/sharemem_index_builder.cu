@@ -16,7 +16,9 @@
 #include <cuda_runtime_api.h>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
+#include <thrust/iterator/constant_iterator.h>
 #include <thrust/scan.h>
+#include <thrust/transform.h>
 
 namespace gpjson::index {
 namespace {
@@ -230,6 +232,8 @@ run_char_sum_scan_orig(const SharememIndexBuilderContext &ctx,
                        cuda::DeviceArray &carry_index_mem,
                        cuda::DeviceArray &carry_index_with_offset_mem,
                        profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId char_sum_scan_timer =
+      profiler.begin_nested("char_sum_scan (orig)");
   cuda::DeviceArray char_sum_base_mem(ctx.reduction_grid_size *
                                       ctx.reduction_block_size * sizeof(char));
   const int scan_stride = reduction_scan_stride(ctx);
@@ -258,6 +262,29 @@ run_char_sum_scan_orig(const SharememIndexBuilderContext &ctx,
           carry_index_with_offset_mem.as<char>());
   cuda::synchronize_and_check();
   profiler.end(char_sum_rebase_timer);
+  profiler.end(char_sum_scan_timer);
+}
+
+inline void
+run_char_sum_scan_thrust(const SharememIndexBuilderContext &ctx,
+                         cuda::DeviceArray &carry_index_mem,
+                         cuda::DeviceArray &carry_index_with_offset_mem,
+                         profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId char_sum_scan_timer =
+      profiler.begin("char_sum_scan (thrust)");
+  thrust::inclusive_scan(thrust::device, carry_index_mem.as<char>(),
+                         carry_index_mem.as<char>() + ctx.num_cuda_threads(),
+                         carry_index_with_offset_mem.as<char>() + 1,
+                         thrust::plus<char>());
+  // This minus 1 from all entries of the array
+  thrust::transform(
+      thrust::device, carry_index_with_offset_mem.as<char>() + 1,
+      carry_index_with_offset_mem.as<char>() + ctx.num_cuda_threads() + 1,
+      thrust::make_constant_iterator(static_cast<char>(1)),
+      carry_index_with_offset_mem.as<char>() + 1, thrust::minus<char>());
+
+  cuda::synchronize_and_check();
+  profiler.end(char_sum_scan_timer);
 }
 
 NewlineStringIndices
@@ -368,8 +395,10 @@ create_leveled_bitmap_index(const SharememIndexBuilderContext &ctx,
                                                 sizeof(char));
   copy_scalar_to_device<char>(carry_index_with_offset_mem, 0, -1);
 
-  run_char_sum_scan_orig(ctx, carry_index_mem, carry_index_with_offset_mem,
-                         profiler);
+  // run_char_sum_scan_orig(ctx, carry_index_mem, carry_index_with_offset_mem,
+  //                        profiler);
+  run_char_sum_scan_thrust(ctx, carry_index_mem, carry_index_with_offset_mem,
+                           profiler);
 
   cuda::DeviceArray leveled_bitmap_index_mem(ctx.level_size() * ctx.max_depth *
                                              sizeof(long));
