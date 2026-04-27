@@ -417,18 +417,16 @@ UncombinedIndexBuilder::UncombinedIndexBuilder(
 BuiltIndices
 UncombinedIndexBuilder::build(const file::FilePartition &partition,
                               size_t max_depth,
-                              const IndexBuilderOptions &options) const {
+                              const IndexBuilderOptions &options,
+                              const gpjson::RunContext &run_context) const {
   LogInfo("Build uncombined index builder.");
-  profiler::Profiler profiler("UncombinedIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer =
-      profiler.begin_nested("build");
+  profiler::Profiler &profiler = run_context.profiler;
   const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_uncombined_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }
@@ -441,18 +439,16 @@ CombinedIndexBuilder::CombinedIndexBuilder(const file::FileReader &file_reader)
 BuiltIndices
 CombinedIndexBuilder::build(const file::FilePartition &partition,
                             size_t max_depth,
-                            const IndexBuilderOptions &options) const {
+                            const IndexBuilderOptions &options,
+                            const gpjson::RunContext &run_context) const {
   LogInfo("Build uncombined index builder.");
-  profiler::Profiler profiler("CombinedIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer =
-      profiler.begin_nested("build");
+  profiler::Profiler &profiler = run_context.profiler;
   const OrigIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_combined_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }

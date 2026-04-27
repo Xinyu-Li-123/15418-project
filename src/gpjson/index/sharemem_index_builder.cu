@@ -429,18 +429,16 @@ SharememIndexBuilder::SharememIndexBuilder(const file::FileReader &file_reader)
 BuiltIndices
 SharememIndexBuilder::build(const file::FilePartition &partition,
                             size_t max_depth,
-                            const IndexBuilderOptions &options) const {
+                            const IndexBuilderOptions &options,
+                            const gpjson::RunContext &run_context) const {
   LogInfo("Build sharemem index builder.");
-  profiler::Profiler profiler("SharememIndexBuilder profiler");
-  const profiler::Profiler::SegmentId build_timer =
-      profiler.begin_nested("build");
+  profiler::Profiler &profiler = run_context.profiler;
   const SharememIndexBuilderContext ctx(options, max_depth, partition);
 
   auto [newline_index, string_index] =
       create_newline_and_string_index(ctx, profiler);
   auto leveled_bitmap_index =
       create_leveled_bitmap_index(ctx, string_index, profiler);
-  profiler.end(build_timer);
   return {std::move(newline_index), std::move(string_index),
           std::move(leveled_bitmap_index)};
 }

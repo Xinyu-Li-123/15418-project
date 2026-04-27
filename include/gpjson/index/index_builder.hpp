@@ -3,6 +3,7 @@
 #include "gpjson/file/file.hpp"
 #include "gpjson/file/file_reader.hpp"
 #include "gpjson/index/index.hpp"
+#include "gpjson/run_context.hpp"
 
 #include <cstddef>
 #include <iosfwd>
@@ -57,7 +58,8 @@ public:
 
   virtual BuiltIndices build(const file::FilePartition &partition,
                              size_t max_depth,
-                             const IndexBuilderOptions &options) const = 0;
+                             const IndexBuilderOptions &options,
+                             const gpjson::RunContext &run_context) const = 0;
 };
 
 class UncombinedIndexBuilder final : public IndexBuilder {
@@ -65,7 +67,8 @@ public:
   explicit UncombinedIndexBuilder(const file::FileReader &file_reader);
 
   BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
-                     const IndexBuilderOptions &options) const override;
+                     const IndexBuilderOptions &options,
+                     const gpjson::RunContext &run_context) const override;
 
 private:
   const file::FileReader &file_reader_;
@@ -76,7 +79,8 @@ public:
   explicit CombinedIndexBuilder(const file::FileReader &file_reader);
 
   BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
-                     const IndexBuilderOptions &options) const override;
+                     const IndexBuilderOptions &options,
+                     const gpjson::RunContext &run_context) const override;
 
 private:
   const file::FileReader &file_reader_;
@@ -87,7 +91,8 @@ public:
   explicit FusedIndexBuilder(const file::FileReader &file_reader);
 
   BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
-                     const IndexBuilderOptions &options) const override;
+                     const IndexBuilderOptions &options,
+                     const gpjson::RunContext &run_context) const override;
 
 private:
   const file::FileReader &file_reader_;
@@ -98,7 +103,8 @@ public:
   explicit SharememIndexBuilder(const file::FileReader &file_reader);
 
   BuiltIndices build(const file::FilePartition &partition, size_t max_depth,
-                     const IndexBuilderOptions &options) const override;
+                     const IndexBuilderOptions &options,
+                     const gpjson::RunContext &run_context) const override;
 
 private:
   const file::FileReader &file_reader_;

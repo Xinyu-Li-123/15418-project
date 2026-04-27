@@ -31,11 +31,12 @@ int main(int argc, char **argv) {
   try {
     const gpjson::driver::DriverInputs inputs =
         gpjson::driver::parse_driver_inputs(argc, argv);
-
+    std::cout << "### RUN BEGIN ###\n";
     gpjson::Engine engine{};
     const gpjson::query::MaterializedBatchResult result = engine.query(
         inputs.dataset_path, inputs.queries, inputs.engine_options);
     summarize_result(result);
+    std::cout << "### RUN END ###\n";
 
     return 0;
   } catch (const gpjson::driver::CliExit &exit) {
