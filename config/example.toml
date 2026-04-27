@@ -1,4 +1,5 @@
 dataset_path = "dataset/twitter_sample_large_record.json"
+run_name = "example"
 queries = ["$.user.lang"]
 
 [file_reader]

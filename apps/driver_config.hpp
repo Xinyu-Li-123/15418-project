@@ -20,6 +20,7 @@
 namespace gpjson::driver {
 
 struct DriverInputs {
+  std::string run_name;
   std::string dataset_path;
   std::vector<std::string> queries;
   gpjson::EngineOptions engine_options;
@@ -41,6 +42,10 @@ DriverInputs default_driver_inputs();
 DriverInputs parse_driver_inputs(int argc, char **argv);
 
 void validate_driver_inputs(const DriverInputs &inputs);
+
+std::string engine_options_to_json(const gpjson::EngineOptions &options);
+
+std::string driver_inputs_to_json(const DriverInputs &inputs);
 
 template <class Enum> Enum parse_enum_value(const std::string &text) {
   const auto value = magic_enum::enum_cast<Enum>(text);

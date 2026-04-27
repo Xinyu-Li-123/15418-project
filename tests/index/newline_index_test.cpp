@@ -11,6 +11,7 @@
 #include "gpjson/cuda/cuda.hpp"
 #include "gpjson/file/file_reader.hpp"
 #include "gpjson/index/index_builder.hpp"
+#include "gpjson/run_context.hpp"
 
 #include <gtest/gtest.h>
 
@@ -43,10 +44,12 @@ TEST_P(NewlineIndexBuilderTest, BuildsNewlineIndex) {
   const gpjson::index::IndexBuilderType builder_type = GetParam();
   auto builder =
       gpjson::test::index::make_index_builder(builder_type, file_reader);
+  gpjson::profiler::Profiler profiler{"NewlineIndexBuilderTest profiler"};
+  gpjson::RunContext run_context{profiler};
 
-  gpjson::index::BuiltIndices indices =
-      builder->build(partition.view(), gpjson::test::index::kMaxDepth,
-                     gpjson::test::index::small_builder_options(builder_type));
+  gpjson::index::BuiltIndices indices = builder->build(
+      partition.view(), gpjson::test::index::kMaxDepth,
+      gpjson::test::index::small_builder_options(builder_type), run_context);
   gpjson::cuda::synchronize_and_check();
 
   const std::vector<long> expected = expected_newline_index(partition.data());

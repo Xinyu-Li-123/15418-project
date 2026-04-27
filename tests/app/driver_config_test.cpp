@@ -50,6 +50,7 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
   const gpjson::driver::DriverInputs inputs =
       gpjson::driver::default_driver_inputs();
 
+  EXPECT_FALSE(inputs.run_name.empty());
   EXPECT_TRUE(inputs.dataset_path.empty());
   EXPECT_TRUE(inputs.queries.empty());
   const auto &file_reader_options = inputs.engine_options.file_reader_options;
@@ -71,6 +72,7 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
 TEST(DriverConfigTest, ParsesTomlConfig) {
   const std::filesystem::path config_path = write_temp_config(R"toml(
 dataset_path = "dataset/input.json"
+run_name = "toml_run"
 queries = ["$.user.lang", "$.user.id"]
 
 [file_reader]
@@ -92,6 +94,7 @@ block_size = 128
   const gpjson::driver::DriverInputs inputs =
       parse_args({"gpjson_driver", "--config", config_path.string()});
 
+  EXPECT_EQ(inputs.run_name, "toml_run");
   EXPECT_EQ(inputs.dataset_path, "dataset/input.json");
   ASSERT_EQ(inputs.queries.size(), 2U);
   EXPECT_EQ(inputs.queries[0], "$.user.lang");
@@ -118,6 +121,7 @@ block_size = 128
 TEST(DriverConfigTest, CliOverridesTomlConfig) {
   const std::filesystem::path config_path = write_temp_config(R"toml(
 dataset_path = "dataset/from_toml.json"
+run_name = "toml_run"
 queries = ["$.toml"]
 
 [file_reader]
@@ -133,13 +137,30 @@ grid_size = 3
 block_size = 4
 )toml");
 
-  const gpjson::driver::DriverInputs inputs = parse_args(
-      {"gpjson_driver", "--config", config_path.string(), "--dataset",
-       "dataset/from_cli.json", "--query", "$.cli.one", "--query", "$.cli.two",
-       "--index-builder.type", "COMBINED", "--file-reader.type", "MMAP",
-       "--index-builder.grid-size", "16384", "--query-executor.grid-size", "55",
-       "--query-executor.block-size", "64"});
+  const gpjson::driver::DriverInputs inputs =
+      parse_args({"gpjson_driver",
+                  "--config",
+                  config_path.string(),
+                  "--dataset",
+                  "dataset/from_cli.json",
+                  "--query",
+                  "$.cli.one",
+                  "--query",
+                  "$.cli.two",
+                  "--run-name",
+                  "cli_run",
+                  "--index-builder.type",
+                  "COMBINED",
+                  "--file-reader.type",
+                  "MMAP",
+                  "--index-builder.grid-size",
+                  "16384",
+                  "--query-executor.grid-size",
+                  "55",
+                  "--query-executor.block-size",
+                  "64"});
 
+  EXPECT_EQ(inputs.run_name, "cli_run");
   EXPECT_EQ(inputs.dataset_path, "dataset/from_cli.json");
   ASSERT_EQ(inputs.queries.size(), 2U);
   EXPECT_EQ(inputs.queries[0], "$.cli.one");
