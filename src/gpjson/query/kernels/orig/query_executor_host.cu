@@ -2,6 +2,7 @@
 
 #include "gpjson/cuda/cuda.hpp"
 #include "gpjson/log/log.hpp"
+#include "gpjson/profiler/profiler.hpp"
 #include "gpjson/query/error.hpp"
 
 #include <algorithm>
@@ -171,9 +172,14 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
 
   const int level_size = compute_level_size(partition.size_bytes());
   const QueryExecutionContext ctx(partition, options, num_lines);
+  profiler::Profiler profiler("QueryExecutor profiler");
+  const profiler::Profiler::SegmentId execute_batch_timer =
+      profiler.begin_nested("execute_batch");
 
   for (size_t query_index = 0; query_index < compiled_queries.size();
        ++query_index) {
+    const profiler::Profiler::SegmentId query_total_timer =
+        profiler.begin_nestedf("query %zu total", query_index);
     const CompiledQuery &compiled_query =
         compiled_queries.queries()[query_index];
     validate_query_inputs(compiled_query, built_indices);
@@ -188,14 +194,21 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
     const size_t host_result_count =
         static_cast<size_t>(num_lines) * static_cast<size_t>(num_results) * 2U;
 
+    const profiler::Profiler::SegmentId copy_query_ir_timer =
+        profiler.begin("copy_query_ir_to_constant_memory");
     copy_query_ir_to_constant_memory(compiled_query.ir_bytes().data(),
                                      query_size);
+    profiler.end(copy_query_ir_timer);
 
+    const profiler::Profiler::SegmentId allocate_result_timer =
+        profiler.begin("allocate_device_result");
     cuda::DeviceArray device_result(host_result_count * sizeof(int));
+    profiler.end(allocate_result_timer);
 
     LogInfo(
         "Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
         ctx.grid_size, ctx.block_size, num_lines, num_results, ctx.file_size);
+    const profiler::Profiler::SegmentId query_timer = profiler.begin("query");
     query<<<ctx.grid_size, ctx.block_size>>>(
         ctx.device_partition(), ctx.file_size,
         static_cast<const long *>(built_indices.get_newline_index().data()),
@@ -206,14 +219,24 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
         level_size, num_results, device_result.as<int>());
     cuda::check(cudaGetLastError(), "execute_query_kernel launch");
     cuda::synchronize_and_check();
+    profiler.end(query_timer);
 
     std::vector<int> host_result_buffer(host_result_count, -1);
+    const profiler::Profiler::SegmentId copy_result_timer =
+        profiler.begin("copy_result_to_host");
     device_result.copy_to_host(host_result_buffer.data(),
                                host_result_buffer.size() * sizeof(int));
+    profiler.end(copy_result_timer);
+
+    const profiler::Profiler::SegmentId append_results_timer =
+        profiler.begin("append_query_line_results");
     append_query_line_results(batch_result, query_index, partition, num_lines,
                               num_results, host_result_buffer);
+    profiler.end(append_results_timer);
+    profiler.end(query_total_timer);
   }
 
+  profiler.end(execute_batch_timer);
   return batch_result;
 }
 
