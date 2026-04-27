@@ -238,7 +238,7 @@ def partition_timing_summary(timings_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def hierarchical_timing_summary(
-    timings_df: pd.DataFrame, max_indent_level: int
+    timings_df: pd.DataFrame, max_indent_level: int, sum_partitions: bool
 ) -> pd.DataFrame:
     if timings_df.empty:
         return pd.DataFrame()
@@ -276,7 +276,7 @@ def hierarchical_timing_summary(
         def emit(index: int, path: tuple[str, ...], depth: int) -> None:
             record = records[index]
             indent_level = int(record["indent_level"])
-            segment = str(record["segment"])
+            segment = hierarchy_segment(record, sum_partitions)
             current_path = (*path, segment)
 
             if indent_level <= max_indent_level:
@@ -307,6 +307,18 @@ def hierarchical_timing_summary(
         if run_name not in summary.columns:
             summary[run_name] = pd.NA
     return summary[["hierarchy", *run_names]]
+
+
+def hierarchy_segment(record: dict[str, Any], sum_partitions: bool) -> str:
+    segment = str(record["segment"])
+    if not sum_partitions or pd.isna(record["partition_id"]):
+        return segment
+
+    partition_match = PARTITION_SEGMENT_RE.match(segment)
+    if partition_match is None:
+        return segment
+
+    return f"partitions {partition_match.group('stage')}"
 
 
 def hierarchy_label(segment: str, depth: int) -> str:
@@ -358,7 +370,10 @@ def print_section(title: str) -> None:
 
 
 def print_report(
-    runs_df: pd.DataFrame, timings_df: pd.DataFrame, max_indent_level: int
+    runs_df: pd.DataFrame,
+    timings_df: pd.DataFrame,
+    max_indent_level: int,
+    sum_partitions: bool,
 ) -> None:
     print_section("Runs")
     if runs_df.empty:
@@ -399,8 +414,13 @@ def print_report(
     else:
         print(partition_summary.to_string(index=False))
 
-    print_section("Hierarchical Timings")
-    hierarchical_summary = hierarchical_timing_summary(timings_df, max_indent_level)
+    title = "Hierarchical Timings"
+    if sum_partitions:
+        title += " (Partition-Summed)"
+    print_section(title)
+    hierarchical_summary = hierarchical_timing_summary(
+        timings_df, max_indent_level, sum_partitions
+    )
     print_hierarchical_timing_summary(hierarchical_summary)
 
 
@@ -419,6 +439,12 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Maximum inclusive profiler indent level to print.",
     )
+    parser.add_argument(
+        "--sum-partitions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Sum matching hierarchical timing segments across partitions.",
+    )
     parser.add_argument("logs", nargs="+", type=Path, help="Log files to parse.")
     return parser.parse_args()
 
@@ -434,7 +460,7 @@ def main() -> int:
         timings.extend(parsed_timings)
 
     runs_df, timings_df = records_to_dataframes(runs, timings)
-    print_report(runs_df, timings_df, args.max_indent_level)
+    print_report(runs_df, timings_df, args.max_indent_level, args.sum_partitions)
     return 0
 
 
