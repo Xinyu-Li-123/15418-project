@@ -1,8 +1,11 @@
 #include "gpjson/log/log.hpp"
 
+#include <cstddef>
+
 namespace gpjson::index::kernels::sharemem {
 
-__device__ void newline_count_index_warp_reduce(const char *file, int fileSize,
+__device__ void newline_count_index_warp_reduce(const char *file,
+                                                size_t fileSize,
                                                 int *perTileNewlineCountIndex) {
   // REQUIRES: gridDim.x * blockDim.x * 64 >= file partition size
   // REQUIRES: length of newlineCountIndex == gridDim.x, i.e. we count the num
@@ -22,7 +25,7 @@ __device__ void newline_count_index_warp_reduce(const char *file, int fileSize,
   int lane_id = tid % WARP_SIZE;
   int warp_id = tid / WARP_SIZE;
   int tile_id = blockIdx.x;
-  int block_start = tile_id * CHUNK_SIZE;
+  size_t block_start = static_cast<size_t>(tile_id) * CHUNK_SIZE;
 
   // each thread read BYTES_PER_THREAD bytes, count newline, sum over warp, and
   // write per-warp count to a shared memory array in_tile_counts.
@@ -38,16 +41,30 @@ __device__ void newline_count_index_warp_reduce(const char *file, int fileSize,
   int in_thread_count = 0;
   // Each thread reads `packed_bytes_gmem` bytes at a time
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    int global_byte_idx = block_start + p * packed_bytes_gmem;
-    int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
+    size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * packed_bytes_gmem;
+    size_t global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
     if (global_byte_idx >= fileSize) {
       break;
     }
-    uint2 packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    uint2 packed_bytes = make_uint2(0u, 0u);
+    if (global_byte_idx + packed_bytes_gmem <= fileSize) {
+      packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    } else {
+      unsigned char *packed_chars =
+          reinterpret_cast<unsigned char *>(&packed_bytes);
+#pragma unroll
+      for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
+        const size_t global_idx = global_byte_idx + local_idx;
+        packed_chars[local_idx] =
+            (global_idx < fileSize) ? static_cast<unsigned char>(file[global_idx])
+                                    : static_cast<unsigned char>(0);
+      }
+    }
     const char *packed_chars = reinterpret_cast<const char *>(&packed_bytes);
 #pragma unroll
     for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
-      int global_idx = global_byte_idx + local_idx;
+      size_t global_idx = global_byte_idx + local_idx;
       char curChar = packed_chars[local_idx];
       if (global_idx < fileSize && curChar == '\n') {
         in_thread_count += 1;
@@ -92,7 +109,7 @@ __device__ void newline_count_index_warp_reduce(const char *file, int fileSize,
   if (tid == 0) {
     int expected_count = 0;
     for (int p = 0; p < CHUNK_SIZE; p++) {
-      int global_byte_idx = block_start + p;
+      size_t global_byte_idx = block_start + p;
       if (global_byte_idx >= fileSize) {
         break;
       }
@@ -108,7 +125,7 @@ __device__ void newline_count_index_warp_reduce(const char *file, int fileSize,
 }
 
 __device__ void
-newline_count_index_packed_bytes(const char *file, int fileSize,
+newline_count_index_packed_bytes(const char *file, size_t fileSize,
                                  int *perTileNewlineCountIndex) {
   // REQUIRES: gridDim.x * blockDim.x * 64 >= file partition size
   // REQUIRES: length of newlineCountIndex == gridDim.x, i.e. we count the num
@@ -124,7 +141,7 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
-  const int block_start = tile_idx * CHUNK_SIZE;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
   int count = 0;
 
   // each thread read BYTES_PER_THREAD bytes, count newline, and write
@@ -141,16 +158,30 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
   int in_thread_count = 0;
   // Each thread reads `packed_bytes_gmem` bytes at a time
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * packed_bytes_gmem;
-    const int global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * packed_bytes_gmem;
+    const size_t global_packed_byte_idx = global_byte_idx / packed_bytes_gmem;
     if (global_byte_idx >= fileSize) {
       break;
     }
-    const uint2 packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    uint2 packed_bytes = make_uint2(0u, 0u);
+    if (global_byte_idx + packed_bytes_gmem <= fileSize) {
+      packed_bytes = file_packed_gmem[global_packed_byte_idx];
+    } else {
+      unsigned char *packed_chars =
+          reinterpret_cast<unsigned char *>(&packed_bytes);
+#pragma unroll
+      for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
+        const size_t global_idx = global_byte_idx + local_idx;
+        packed_chars[local_idx] =
+            (global_idx < fileSize) ? static_cast<unsigned char>(file[global_idx])
+                                    : static_cast<unsigned char>(0);
+      }
+    }
     const char *packed_chars = reinterpret_cast<const char *>(&packed_bytes);
 #pragma unroll
     for (int local_idx = 0; local_idx < packed_bytes_gmem; ++local_idx) {
-      const int global_idx = global_byte_idx + local_idx;
+      const size_t global_idx = global_byte_idx + local_idx;
       const char curChar = packed_chars[local_idx];
       if (global_idx < fileSize && curChar == '\n') {
         in_thread_count += 1;
@@ -178,7 +209,7 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
   if (tid == 0) {
     int expected_count = 0;
     for (int p = 0; p < CHUNK_SIZE; p++) {
-      int global_byte_idx = block_start + p;
+      size_t global_byte_idx = block_start + p;
       if (global_byte_idx >= fileSize) {
         break;
       }
@@ -201,7 +232,7 @@ newline_count_index_packed_bytes(const char *file, int fileSize,
  * process a tile size of T * B bytes.
  *
  */
-__global__ void newline_count_index(const char *file, int fileSize,
+__global__ void newline_count_index(const char *file, size_t fileSize,
                                     int *perTileNewlineCountIndex) {
   bool use_warp_reduce = true;
   if (use_warp_reduce) {

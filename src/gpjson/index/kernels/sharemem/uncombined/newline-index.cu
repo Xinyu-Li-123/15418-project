@@ -1,5 +1,7 @@
 #include "gpjson/log/log.hpp"
 
+#include <cstddef>
+
 namespace gpjson::index::kernels::sharemem {
 
 /**
@@ -20,7 +22,7 @@ namespace gpjson::index::kernels::sharemem {
  * continguous chunk of 64 bytes.
  */
 __device__ void
-newline_index_sharemem_transposed_packed(const char *file, int fileSize,
+newline_index_sharemem_transposed_packed(const char *file, size_t fileSize,
                                          int *perTileNewlineOffsetIndex,
                                          long *newlineIndex) {
   constexpr int BYTES_PER_THREAD = 64;
@@ -44,7 +46,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
-  const int block_start = tile_idx * CHUNK_SIZE;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
   const int tile_offset = perTileNewlineOffsetIndex[tile_idx];
 
   const int lane_id = tid % WARP_SIZE;
@@ -60,12 +62,24 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
 
   // Coalesced global load, then transpose+pack into shared memory.
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
-    const int global_packed_idx = global_byte_idx / PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
+    const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
-    if (global_byte_idx < fileSize) {
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
       packed_bytes = file_packed_gmem[global_packed_idx];
+    } else if (global_byte_idx < fileSize) {
+      unsigned char *packed_chars =
+          reinterpret_cast<unsigned char *>(&packed_bytes);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const size_t global_idx = global_byte_idx + i;
+        packed_chars[i] =
+            (global_idx < fileSize) ? static_cast<unsigned char>(file[global_idx])
+                                    : static_cast<unsigned char>(0);
+      }
     }
 
     const char *packed_chars = reinterpret_cast<const char *>(&packed_bytes);
@@ -73,7 +87,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
     unsigned char flag_bytes[PACK_BYTES];
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
-      const int global_idx = global_byte_idx + i;
+      const size_t global_idx = global_byte_idx + i;
       flag_bytes[i] =
           (global_idx < fileSize && packed_chars[i] == '\n') ? 1 : 0;
     }
@@ -158,7 +172,8 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
   int global_offset =
       tile_offset + per_warp_offsets[warp_id] + in_warp_exclusive_offset;
 
-  const int thread_global_base = block_start + tid * BYTES_PER_THREAD;
+  const size_t thread_global_base =
+      block_start + static_cast<size_t>(tid) * BYTES_PER_THREAD;
 
 #pragma unroll
   for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
@@ -167,11 +182,12 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
     const unsigned char *packed_flags =
         reinterpret_cast<const unsigned char *>(&packed_flags_word);
 
-    const int group_global_base = thread_global_base + group * PACK_BYTES;
+    const size_t group_global_base =
+        thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
 
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
-      const int global_idx = group_global_base + i;
+      const size_t global_idx = group_global_base + i;
       if (global_idx < fileSize && packed_flags[i]) {
         // Keep GPJSON's leading sentinel at index 0.
         newlineIndex[global_offset + 1] = static_cast<long>(global_idx);
@@ -181,7 +197,7 @@ newline_index_sharemem_transposed_packed(const char *file, int fileSize,
   }
 }
 
-__global__ void newline_index(const char *file, int fileSize,
+__global__ void newline_index(const char *file, size_t fileSize,
                               int *perTileNewlineOffsetIndex,
                               long *newlineIndex) {
   // Check out ./newline-index.cu.disabled for different optimization on newline

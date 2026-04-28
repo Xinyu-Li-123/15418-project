@@ -41,7 +41,7 @@ public:
   int num_cuda_threads() const { return grid_size * block_size; }
   int level_size() const {
     // TODO: Why? This is copied from java codebase, but 64 seems random
-    return (this->file_size + 64 - 1) / 64;
+    return static_cast<int>((this->file_size + 64 - 1) / 64);
   }
 
   const char *device_file() const { return device_file_; }
@@ -51,7 +51,7 @@ public:
   const int reduction_grid_size;
   const int reduction_block_size;
   const int max_depth;
-  const int file_size;
+  const size_t file_size;
 
 private:
   const char *device_file_{nullptr};

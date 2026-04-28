@@ -2,12 +2,13 @@
 #include "gpjson/log/log.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 
 namespace gpjson::index::kernels::sharemem {
 
 __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
-    const char *file, int fileSize, const long *stringIndex,
+    const char *file, size_t fileSize, const long *stringIndex,
     char *leveledBitmapsAuxIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
@@ -29,9 +30,10 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
 
-  const int block_start = tile_idx * CHUNK_SIZE;
-  const int global_thread_id = tile_idx * THREADS_PER_BLOCK + tid;
-  const int thread_global_base = global_thread_id * BYTES_PER_THREAD;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+  const size_t global_thread_id =
+      static_cast<size_t>(tile_idx) * THREADS_PER_BLOCK + tid;
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
 
   __shared__ uint2
       smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
@@ -39,19 +41,20 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
 
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
-    if (global_byte_idx + PACK_BYTES - 1 < fileSize) {
-      const int global_packed_idx = global_byte_idx / PACK_BYTES;
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
       packed_bytes = file_packed_gmem[global_packed_idx];
     } else if (global_byte_idx < fileSize) {
       unsigned char tmp[PACK_BYTES] = {0};
 
 #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
-        const int global_idx = global_byte_idx + i;
+        const size_t global_idx = global_byte_idx + i;
         if (global_idx < fileSize) {
           tmp[i] = static_cast<unsigned char>(file[global_idx]);
         }
@@ -91,7 +94,7 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
 #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
         const int byte_offset = group * PACK_BYTES + i;
-        const int global_idx = thread_global_base + byte_offset;
+        const size_t global_idx = thread_global_base + byte_offset;
 
         if (global_idx >= fileSize) {
           break;
@@ -117,7 +120,7 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
   leveledBitmapsAuxIndex[global_thread_id] = level;
 }
 
-__global__ void leveled_bitmaps_carry_index(const char *file, int fileSize,
+__global__ void leveled_bitmaps_carry_index(const char *file, size_t fileSize,
                                             const long *stringIndex,
                                             char *leveledBitmapsAuxIndex) {
   leveled_bitmaps_carry_index_sharemem_transposed_packed(
