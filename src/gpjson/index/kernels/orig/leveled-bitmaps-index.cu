@@ -1,11 +1,12 @@
 #include <cassert>
+#include <cstddef>
 
 namespace gpjson::index::kernels::orig {
 namespace {
 constexpr int kMaxNumLevels = 22;
 }
 
-__global__ void leveled_bitmaps_index(const char *file, int fileSize,
+__global__ void leveled_bitmaps_index(const char *file, size_t fileSize,
                                       const long *stringIndex,
                                       char *leveledBitmapsAuxIndex,
                                       long *leveledBitmapsIndex, int levelSize,
@@ -15,16 +16,18 @@ __global__ void leveled_bitmaps_index(const char *file, int fileSize,
   int index = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
 
-  int charsPerThread = (fileSize + stride - 1) / stride;
-  int bitmapAlignedCharsPerThread = ((charsPerThread + 64 - 1) / 64) * 64;
-  int start = index * bitmapAlignedCharsPerThread;
-  int end = start + bitmapAlignedCharsPerThread;
+  size_t charsPerThread =
+      (fileSize + static_cast<size_t>(stride) - 1) / stride;
+  size_t bitmapAlignedCharsPerThread =
+      ((charsPerThread + 64 - 1) / 64) * 64;
+  size_t start = static_cast<size_t>(index) * bitmapAlignedCharsPerThread;
+  size_t end = start + bitmapAlignedCharsPerThread;
 
   signed char level = leveledBitmapsAuxIndex[index];
 
-  for (int blockStart = start; blockStart < end && blockStart < fileSize;
+  for (size_t blockStart = start; blockStart < end && blockStart < fileSize;
        blockStart += 64) {
-    const int wordIndex = blockStart / 64;
+    const size_t wordIndex = blockStart / 64;
     const long string = stringIndex[wordIndex];
     // Accumulate a full 64-bit output word locally, then write each level once.
     long structuralBitmaps[kMaxNumLevels];
@@ -32,12 +35,12 @@ __global__ void leveled_bitmaps_index(const char *file, int fileSize,
       structuralBitmaps[bitmapLevel] = 0;
     }
 
-    const int blockEnd =
+    const size_t blockEnd =
         blockStart + 64 < fileSize ? blockStart + 64 : fileSize;
-    for (int i = blockStart; i < blockEnd; i += 1) {
+    for (size_t i = blockStart; i < blockEnd; i += 1) {
       assert(level >= -1);
 
-      const long offsetInBlock = i % 64;
+      const int offsetInBlock = static_cast<int>(i % 64);
       const long bit = 1L << offsetInBlock;
       if ((string & bit) != 0) {
         continue;
@@ -62,7 +65,8 @@ __global__ void leveled_bitmaps_index(const char *file, int fileSize,
     }
 
     for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
-      leveledBitmapsIndex[levelSize * bitmapLevel + wordIndex] =
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * bitmapLevel +
+                          wordIndex] =
           structuralBitmaps[bitmapLevel];
     }
   }

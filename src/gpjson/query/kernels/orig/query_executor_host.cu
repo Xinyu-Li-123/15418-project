@@ -172,7 +172,7 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
 
   const int level_size = compute_level_size(partition.size_bytes());
   const QueryExecutionContext ctx(partition, options, num_lines);
-  profiler::Profiler profiler("QueryExecutor profiler");
+  profiler::Profiler profiler("Engine::query profiler");
   const profiler::Profiler::SegmentId execute_batch_timer =
       profiler.begin_nested("execute_batch");
 

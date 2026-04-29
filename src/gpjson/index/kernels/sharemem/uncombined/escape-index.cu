@@ -1,8 +1,217 @@
 #include "gpjson/log/log.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace gpjson::index::kernels::sharemem {
+
+__device__ void escape_index_packed(const char *file, size_t fileSize,
+                                    char *escapeCarryIndex, long *escapeIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  if (thread_global_base >= fileSize) {
+    return;
+  }
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  bool carry = global_thread_id == 0
+                   ? false
+                   : static_cast<bool>(escapeCarryIndex[global_thread_id - 1]);
+
+  uint64_t escape_word = 0;
+
+#pragma unroll
+  for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+    const size_t global_byte_idx =
+        thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
+
+    uint2 packed_bytes_word = make_uint2(0u, 0u);
+
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
+      packed_bytes_word = file_packed_gmem[global_packed_idx];
+    } else if (global_byte_idx < fileSize) {
+      unsigned char *packed_bytes =
+          reinterpret_cast<unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const size_t global_idx = global_byte_idx + i;
+        packed_bytes[i] = global_idx < fileSize
+                              ? static_cast<unsigned char>(file[global_idx])
+                              : static_cast<unsigned char>(0);
+      }
+    }
+
+    const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                          static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+    for (int i = 0; i < PACK_BYTES; ++i) {
+      const int byte_offset = group * PACK_BYTES + i;
+      const size_t global_idx = thread_global_base + byte_offset;
+
+      if (global_idx >= fileSize) {
+        break;
+      }
+
+      if (carry) {
+        escape_word |= uint64_t{1} << byte_offset;
+      }
+
+      const unsigned char cur_char =
+          static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+      if (cur_char == static_cast<unsigned char>('\\')) {
+        carry = !carry;
+      } else {
+        carry = false;
+      }
+    }
+  }
+
+  escapeIndex[thread_global_base / BYTES_PER_THREAD] =
+      static_cast<long>(escape_word);
+}
+
+__device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
+                                             char *escapeCarryIndex,
+                                             long *escapeIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+  constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
+
+  Check(CHUNK_SIZE == BYTES_PER_THREAD * THREADS_PER_BLOCK,
+        "Invalid choice of kernel config.");
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+  constexpr int PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+  const int tile_idx = blockIdx.x;
+
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  // Non-transposed packed layout:
+  //
+  //   smem_packed_bytes[p]
+  //
+  // where p follows file order. Equivalently:
+  //
+  //   smem_packed_bytes[owner_tid * PACKED_GROUPS_PER_THREAD + group]
+  //
+  // This makes the shared-memory write contiguous, but the later per-group
+  // warp read is strided by PACKED_GROUPS_PER_THREAD.
+  __shared__ uint2 smem_packed_bytes[PACKED_ELEMS_PER_BLOCK];
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  // Coalesced global load, then linear shared-memory write.
+  for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
+
+    uint2 packed_bytes = make_uint2(0u, 0u);
+
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
+      packed_bytes = file_packed_gmem[global_packed_idx];
+    } else if (global_byte_idx < fileSize) {
+      unsigned char tmp[PACK_BYTES] = {0};
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const size_t global_idx = global_byte_idx + i;
+        if (global_idx < fileSize) {
+          tmp[i] = static_cast<unsigned char>(file[global_idx]);
+        }
+      }
+
+      unsigned char *packed_chars =
+          reinterpret_cast<unsigned char *>(&packed_bytes);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        packed_chars[i] = tmp[i];
+      }
+    }
+
+    // Non-transposed: preserve file-order layout in shared memory.
+    smem_packed_bytes[p] = packed_bytes;
+  }
+
+  __syncthreads();
+
+  bool carry = global_thread_id == 0
+                   ? false
+                   : static_cast<bool>(escapeCarryIndex[global_thread_id - 1]);
+
+  uint64_t escape_word = 0;
+
+#pragma unroll
+  for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+    const int smem_idx = tid * PACKED_GROUPS_PER_THREAD + group;
+    const uint2 packed_bytes_word = smem_packed_bytes[smem_idx];
+
+    const unsigned char *packed_bytes =
+        reinterpret_cast<const unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+    for (int i = 0; i < PACK_BYTES; ++i) {
+      const int byte_offset = group * PACK_BYTES + i;
+      const size_t global_idx = thread_global_base + byte_offset;
+
+      if (global_idx >= fileSize) {
+        break;
+      }
+
+      if (carry) {
+        escape_word |= uint64_t{1} << byte_offset;
+      }
+
+      if (packed_bytes[i] == static_cast<unsigned char>('\\')) {
+        carry = !carry;
+      } else {
+        carry = false;
+      }
+    }
+  }
+
+  if (thread_global_base < fileSize) {
+    escapeIndex[thread_global_base / BYTES_PER_THREAD] =
+        static_cast<long>(escape_word);
+  }
+}
 
 /**
  * Transposed packed shared-memory escape-index kernel.
@@ -12,7 +221,7 @@ namespace gpjson::index::kernels::sharemem {
  * coalesced, smem read from smem.
  */
 __device__ void escape_index_sharemem_transposed_packed(const char *file,
-                                                        long fileSize,
+                                                        size_t fileSize,
                                                         char *escapeCarryIndex,
                                                         long *escapeIndex) {
   constexpr int BYTES_PER_THREAD = 64;
@@ -35,15 +244,12 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
 
-  const long block_start =
-      static_cast<long>(tile_idx) * static_cast<long>(CHUNK_SIZE);
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
 
-  const long global_thread_id =
-      static_cast<long>(blockIdx.x) * static_cast<long>(blockDim.x) +
-      static_cast<long>(tid);
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * blockDim.x + tid;
 
-  const long thread_global_base =
-      global_thread_id * static_cast<long>(BYTES_PER_THREAD);
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
 
   __shared__ uint2
       smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
@@ -51,20 +257,20 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
 
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const long global_byte_idx =
-        block_start + static_cast<long>(p) * static_cast<long>(PACK_BYTES);
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
-    if (global_byte_idx + PACK_BYTES - 1 < fileSize) {
-      const long global_packed_idx = global_byte_idx / PACK_BYTES;
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
       packed_bytes = file_packed_gmem[global_packed_idx];
     } else if (global_byte_idx < fileSize) {
       unsigned char tmp[PACK_BYTES] = {0};
 
 #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
-        const long global_idx = global_byte_idx + i;
+        const size_t global_idx = global_byte_idx + i;
         if (global_idx < fileSize) {
           tmp[i] = static_cast<unsigned char>(file[global_idx]);
         }
@@ -105,7 +311,7 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
       const int byte_offset = group * PACK_BYTES + i;
-      const long global_idx = thread_global_base + byte_offset;
+      const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
         break;
@@ -129,10 +335,16 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   }
 }
 
-__global__ void escape_index(const char *file, long fileSize,
+__global__ void escape_index(const char *file, size_t fileSize,
                              char *escapeCarryIndex, long *escapeIndex) {
-  escape_index_sharemem_transposed_packed(file, fileSize, escapeCarryIndex,
-                                          escapeIndex);
+
+  escape_index_packed(file, fileSize, escapeCarryIndex, escapeIndex);
+
+  // escape_index_sharemem_packed(file, fileSize, escapeCarryIndex,
+  // escapeIndex);
+
+  // escape_index_sharemem_transposed_packed(file, fileSize, escapeCarryIndex,
+  //                                         escapeIndex);
 }
 
 } // namespace gpjson::index::kernels::sharemem
