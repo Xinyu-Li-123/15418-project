@@ -3,9 +3,323 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 
 namespace gpjson::index::kernels::sharemem {
+
+__device__ void
+leveled_bitmaps_carry_index_packed_skip_str(const char *file, size_t fileSize,
+                                            const long *stringIndex,
+                                            char *leveledBitmapsAuxIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * THREADS_PER_BLOCK + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  signed char level = 0;
+
+  if (thread_global_base < fileSize) {
+    const long string = stringIndex[thread_global_base / BYTES_PER_THREAD];
+
+#pragma unroll
+    for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+      const int byte_offset_base = group * PACK_BYTES;
+      const size_t group_global_base =
+          thread_global_base + static_cast<size_t>(byte_offset_base);
+
+      if (group_global_base >= fileSize) {
+        break;
+      }
+
+      // Extract the 8 string-index bits corresponding to this 8-byte pack.
+      //
+      // In the current convention:
+      //   bit = 1 means the byte is inside a string
+      //   bit = 0 means the byte is outside a string
+      //
+      // If all 8 bits are 1, the entire packed group is inside a string,
+      // so none of its bytes can affect the nesting level. Skip the file load.
+      const unsigned int string_pack_mask = static_cast<unsigned int>(
+          (static_cast<unsigned long long>(string) >> byte_offset_base) &
+          0xFFull);
+
+      if (string_pack_mask == 0xFFu) {
+        continue;
+      }
+
+      uint2 packed_bytes_word = make_uint2(0u, 0u);
+
+      if (group_global_base + PACK_BYTES <= fileSize) {
+        const size_t global_packed_idx = group_global_base / PACK_BYTES;
+        packed_bytes_word = file_packed_gmem[global_packed_idx];
+      } else {
+        unsigned char *packed_bytes =
+            reinterpret_cast<unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+        for (int i = 0; i < PACK_BYTES; ++i) {
+          const size_t global_idx = group_global_base + i;
+          packed_bytes[i] = global_idx < fileSize
+                                ? static_cast<unsigned char>(file[global_idx])
+                                : static_cast<unsigned char>(0);
+        }
+      }
+
+      const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                            static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const int byte_offset = byte_offset_base + i;
+        const size_t global_idx = thread_global_base + byte_offset;
+
+        if (global_idx >= fileSize) {
+          break;
+        }
+
+        // Skip bytes inside strings.
+        if ((string_pack_mask & (1u << i)) != 0u) {
+          continue;
+        }
+
+        const unsigned char value =
+            static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+        if (value == static_cast<unsigned char>('{') ||
+            value == static_cast<unsigned char>('[')) {
+          level++;
+        } else if (value == static_cast<unsigned char>('}') ||
+                   value == static_cast<unsigned char>(']')) {
+          level--;
+        }
+      }
+    }
+  }
+
+  leveledBitmapsAuxIndex[global_thread_id] = level;
+}
+
+__device__ void
+leveled_bitmaps_carry_index_packed(const char *file, size_t fileSize,
+                                   const long *stringIndex,
+                                   char *leveledBitmapsAuxIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * THREADS_PER_BLOCK + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  signed char level = 0;
+
+  if (thread_global_base < fileSize) {
+    const long string = stringIndex[thread_global_base / BYTES_PER_THREAD];
+
+#pragma unroll
+    for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+      const size_t group_global_base =
+          thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
+
+      if (group_global_base >= fileSize) {
+        break;
+      }
+
+      uint2 packed_bytes_word = make_uint2(0u, 0u);
+
+      if (group_global_base + PACK_BYTES <= fileSize) {
+        const size_t global_packed_idx = group_global_base / PACK_BYTES;
+        packed_bytes_word = file_packed_gmem[global_packed_idx];
+      } else {
+        unsigned char *packed_bytes =
+            reinterpret_cast<unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+        for (int i = 0; i < PACK_BYTES; ++i) {
+          const size_t global_idx = group_global_base + i;
+          packed_bytes[i] = global_idx < fileSize
+                                ? static_cast<unsigned char>(file[global_idx])
+                                : static_cast<unsigned char>(0);
+        }
+      }
+
+      const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                            static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const int byte_offset = group * PACK_BYTES + i;
+        const size_t global_idx = thread_global_base + byte_offset;
+
+        if (global_idx >= fileSize) {
+          break;
+        }
+
+        if ((string & (1L << byte_offset)) != 0) {
+          continue;
+        }
+
+        const unsigned char value =
+            static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+        if (value == static_cast<unsigned char>('{') ||
+            value == static_cast<unsigned char>('[')) {
+          level++;
+        } else if (value == static_cast<unsigned char>('}') ||
+                   value == static_cast<unsigned char>(']')) {
+          level--;
+        }
+      }
+    }
+  }
+
+  leveledBitmapsAuxIndex[global_thread_id] = level;
+}
+
+__device__ void
+leveled_bitmaps_carry_index_sharemem_packed(const char *file, size_t fileSize,
+                                            const long *stringIndex,
+                                            char *leveledBitmapsAuxIndex) {
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+  constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
+
+  Check(CHUNK_SIZE == BYTES_PER_THREAD * THREADS_PER_BLOCK,
+        "Invalid choice of kernel config.");
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+  constexpr int PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+  const int tile_idx = blockIdx.x;
+
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+  const size_t global_thread_id =
+      static_cast<size_t>(tile_idx) * THREADS_PER_BLOCK + tid;
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  // Non-transposed packed layout:
+  //
+  //   smem_packed_bytes[p]
+  //
+  // where p follows file order. Equivalently:
+  //
+  //   smem_packed_bytes[owner_tid * PACKED_GROUPS_PER_THREAD + group]
+  //
+  // This makes the shared-memory write contiguous, but the later per-group
+  // warp read is strided by PACKED_GROUPS_PER_THREAD.
+  __shared__ uint2 smem_packed_bytes[PACKED_ELEMS_PER_BLOCK];
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  // Coalesced global load, then linear shared-memory write.
+  for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
+
+    uint2 packed_bytes = make_uint2(0u, 0u);
+
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
+      packed_bytes = file_packed_gmem[global_packed_idx];
+    } else if (global_byte_idx < fileSize) {
+      unsigned char *packed_chars =
+          reinterpret_cast<unsigned char *>(&packed_bytes);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const size_t global_idx = global_byte_idx + i;
+        packed_chars[i] = (global_idx < fileSize)
+                              ? static_cast<unsigned char>(file[global_idx])
+                              : static_cast<unsigned char>(0);
+      }
+    }
+
+    // Non-transposed: preserve file-order layout in shared memory.
+    smem_packed_bytes[p] = packed_bytes;
+  }
+
+  __syncthreads();
+
+  signed char level = 0;
+
+  if (thread_global_base < fileSize) {
+    const long string = stringIndex[thread_global_base / BYTES_PER_THREAD];
+
+#pragma unroll
+    for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+      const int smem_idx = tid * PACKED_GROUPS_PER_THREAD + group;
+      const uint2 packed_bytes_word = smem_packed_bytes[smem_idx];
+
+      const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                            static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const int byte_offset = group * PACK_BYTES + i;
+        const size_t global_idx = thread_global_base + byte_offset;
+
+        if (global_idx >= fileSize) {
+          break;
+        }
+
+        if ((string & (1L << byte_offset)) != 0) {
+          continue;
+        }
+
+        const unsigned char value =
+            static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+        if (value == static_cast<unsigned char>('{') ||
+            value == static_cast<unsigned char>('[')) {
+          level++;
+        } else if (value == static_cast<unsigned char>('}') ||
+                   value == static_cast<unsigned char>(']')) {
+          level--;
+        }
+      }
+    }
+  }
+
+  leveledBitmapsAuxIndex[global_thread_id] = level;
+}
 
 __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
     const char *file, size_t fileSize, const long *stringIndex,
@@ -123,6 +437,15 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
 __global__ void leveled_bitmaps_carry_index(const char *file, size_t fileSize,
                                             const long *stringIndex,
                                             char *leveledBitmapsAuxIndex) {
+  // leveled_bitmaps_carry_index_packed_skip_str(file, fileSize, stringIndex,
+  //                                             leveledBitmapsAuxIndex);
+
+  // leveled_bitmaps_carry_index_packed(file, fileSize, stringIndex,
+  //                                    leveledBitmapsAuxIndex);
+
+  // leveled_bitmaps_carry_index_sharemem_packed(file, fileSize, stringIndex,
+  //                                             leveledBitmapsAuxIndex);
+
   leveled_bitmaps_carry_index_sharemem_transposed_packed(
       file, fileSize, stringIndex, leveledBitmapsAuxIndex);
 }

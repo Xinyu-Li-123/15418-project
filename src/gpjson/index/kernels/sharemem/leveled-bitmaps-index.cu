@@ -18,11 +18,8 @@ __device__ void leveled_bitmaps_index_orig(const char *file, size_t fileSize,
 
   int index = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
-
-  size_t charsPerThread =
-      (fileSize + static_cast<size_t>(stride) - 1) / stride;
-  size_t bitmapAlignedCharsPerThread =
-      ((charsPerThread + 64 - 1) / 64) * 64;
+  size_t charsPerThread = (fileSize + static_cast<size_t>(stride) - 1) / stride;
+  size_t bitmapAlignedCharsPerThread = ((charsPerThread + 64 - 1) / 64) * 64;
   size_t start = static_cast<size_t>(index) * bitmapAlignedCharsPerThread;
   size_t end = start + bitmapAlignedCharsPerThread;
 
@@ -69,8 +66,266 @@ __device__ void leveled_bitmaps_index_orig(const char *file, size_t fileSize,
 
     for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
       leveledBitmapsIndex[static_cast<size_t>(levelSize) * bitmapLevel +
-                          wordIndex] =
-          structuralBitmaps[bitmapLevel];
+                          wordIndex] = structuralBitmaps[bitmapLevel];
+    }
+  }
+}
+
+__device__ void leveled_bitmaps_index_packed(const char *file, size_t fileSize,
+                                             const long *stringIndex,
+                                             const char *leveledBitmapsAuxIndex,
+                                             long *leveledBitmapsIndex,
+                                             int levelSize, int numLevels) {
+  assert(numLevels <= kMaxNumLevels);
+
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * THREADS_PER_BLOCK + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  signed char level = leveledBitmapsAuxIndex[global_thread_id];
+
+  long structuralBitmaps[kMaxNumLevels];
+
+#pragma unroll
+  for (int bitmapLevel = 0; bitmapLevel < kMaxNumLevels; ++bitmapLevel) {
+    if (bitmapLevel < numLevels) {
+      structuralBitmaps[bitmapLevel] = 0;
+    }
+  }
+
+  if (thread_global_base < fileSize) {
+    const size_t wordIndex = thread_global_base / BYTES_PER_THREAD;
+    const long string = stringIndex[wordIndex];
+
+#pragma unroll
+    for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+      const int byte_offset_base = group * PACK_BYTES;
+      const size_t group_global_base =
+          thread_global_base + static_cast<size_t>(byte_offset_base);
+
+      if (group_global_base >= fileSize) {
+        break;
+      }
+
+      uint2 packed_bytes_word = make_uint2(0u, 0u);
+
+      if (group_global_base + PACK_BYTES <= fileSize) {
+        const size_t global_packed_idx = group_global_base / PACK_BYTES;
+        packed_bytes_word = file_packed_gmem[global_packed_idx];
+      } else {
+        unsigned char *packed_bytes =
+            reinterpret_cast<unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+        for (int i = 0; i < PACK_BYTES; ++i) {
+          const size_t global_idx = group_global_base + i;
+          packed_bytes[i] = global_idx < fileSize
+                                ? static_cast<unsigned char>(file[global_idx])
+                                : static_cast<unsigned char>(0);
+        }
+      }
+
+      const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                            static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        const int byte_offset = byte_offset_base + i;
+        const size_t global_idx = thread_global_base + byte_offset;
+
+        if (global_idx >= fileSize) {
+          break;
+        }
+
+        const long bit = 1L << byte_offset;
+
+        if ((string & bit) != 0) {
+          continue;
+        }
+
+        const unsigned char value =
+            static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+        if (value == static_cast<unsigned char>('{') ||
+            value == static_cast<unsigned char>('[')) {
+          level++;
+
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+        } else if (value == static_cast<unsigned char>('}') ||
+                   value == static_cast<unsigned char>(']')) {
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+
+          level--;
+        } else if (value == static_cast<unsigned char>(':') ||
+                   value == static_cast<unsigned char>(',')) {
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+        }
+      }
+    }
+
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; ++bitmapLevel) {
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * bitmapLevel +
+                          wordIndex] = structuralBitmaps[bitmapLevel];
+    }
+  }
+}
+
+__device__ void leveled_bitmaps_index_packed_skip_str(
+    const char *file, size_t fileSize, const long *stringIndex,
+    const char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex,
+    int levelSize, int numLevels) {
+  assert(numLevels <= kMaxNumLevels);
+
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  constexpr int PACK_BYTES = 8;
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
+  static_assert(sizeof(uint2) == PACK_BYTES);
+
+  const int tid = threadIdx.x;
+
+  const size_t global_thread_id =
+      static_cast<size_t>(blockIdx.x) * THREADS_PER_BLOCK + tid;
+
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+
+  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
+
+  signed char level = leveledBitmapsAuxIndex[global_thread_id];
+
+  long structuralBitmaps[kMaxNumLevels];
+
+#pragma unroll
+  for (int bitmapLevel = 0; bitmapLevel < kMaxNumLevels; ++bitmapLevel) {
+    if (bitmapLevel < numLevels) {
+      structuralBitmaps[bitmapLevel] = 0;
+    }
+  }
+
+  if (thread_global_base < fileSize) {
+    const size_t wordIndex = thread_global_base / BYTES_PER_THREAD;
+    const long string = stringIndex[wordIndex];
+
+#pragma unroll
+    for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+      const int byte_offset_base = group * PACK_BYTES;
+      const size_t group_global_base =
+          thread_global_base + static_cast<size_t>(byte_offset_base);
+
+      if (group_global_base >= fileSize) {
+        break;
+      }
+
+      // Extract the 8 string-mask bits for this 8-byte pack.
+      // Convention: bit 1 means inside string, bit 0 means outside string.
+      const unsigned int string_pack_mask = static_cast<unsigned int>(
+          (static_cast<unsigned long long>(string) >> byte_offset_base) &
+          0xFFull);
+
+      const unsigned int outside_string_mask = (~string_pack_mask) & 0xFFu;
+
+      // If every byte in this pack is inside a string, no structural byte in
+      // this pack can affect the leveled bitmap. Skip the global file load.
+      if (outside_string_mask == 0u) {
+        continue;
+      }
+
+      uint2 packed_bytes_word = make_uint2(0u, 0u);
+
+      if (group_global_base + PACK_BYTES <= fileSize) {
+        const size_t global_packed_idx = group_global_base / PACK_BYTES;
+        packed_bytes_word = file_packed_gmem[global_packed_idx];
+      } else {
+        unsigned char *packed_bytes =
+            reinterpret_cast<unsigned char *>(&packed_bytes_word);
+
+#pragma unroll
+        for (int i = 0; i < PACK_BYTES; ++i) {
+          const size_t global_idx = group_global_base + i;
+          packed_bytes[i] = global_idx < fileSize
+                                ? static_cast<unsigned char>(file[global_idx])
+                                : static_cast<unsigned char>(0);
+        }
+      }
+
+      const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
+                            static_cast<uint64_t>(packed_bytes_word.x);
+
+#pragma unroll
+      for (int i = 0; i < PACK_BYTES; ++i) {
+        // Skip byte positions that are inside strings. This uses the 8-bit
+        // pack-local mask instead of testing the full 64-bit string word.
+        if ((outside_string_mask & (1u << i)) == 0u) {
+          continue;
+        }
+
+        const int byte_offset = byte_offset_base + i;
+        const size_t global_idx = thread_global_base + byte_offset;
+
+        if (global_idx >= fileSize) {
+          break;
+        }
+
+        const long bit = 1L << byte_offset;
+
+        const unsigned char value =
+            static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
+
+        if (value == static_cast<unsigned char>('{') ||
+            value == static_cast<unsigned char>('[')) {
+          level++;
+
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+        } else if (value == static_cast<unsigned char>('}') ||
+                   value == static_cast<unsigned char>(']')) {
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+
+          level--;
+        } else if (value == static_cast<unsigned char>(':') ||
+                   value == static_cast<unsigned char>(',')) {
+          if (level >= 0 && level < numLevels) {
+            structuralBitmaps[level] |= bit;
+          }
+        }
+      }
+    }
+
+    for (int bitmapLevel = 0; bitmapLevel < numLevels; ++bitmapLevel) {
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * bitmapLevel +
+                          wordIndex] = structuralBitmaps[bitmapLevel];
     }
   }
 }
@@ -542,6 +797,14 @@ __global__ void leveled_bitmaps_index(const char *file, size_t fileSize,
   leveled_bitmaps_index_orig(file, fileSize, stringIndex,
                              leveledBitmapsAuxIndex, leveledBitmapsIndex,
                              levelSize, numLevels);
+
+  // leveled_bitmaps_index_packed(file, fileSize, stringIndex,
+  //                              leveledBitmapsAuxIndex, leveledBitmapsIndex,
+  //                              levelSize, numLevels);
+
+  // leveled_bitmaps_index_packed_skip_str(
+  //     file, fileSize, stringIndex, leveledBitmapsAuxIndex,
+  //     leveledBitmapsIndex, levelSize, numLevels);
 
   // leveled_bitmaps_index_sharemem_transposed_packed(
   //     file, fileSize, stringIndex, leveledBitmapsAuxIndex,
