@@ -12,6 +12,12 @@
 #include "gpjson/log/log.hpp"
 #include "gpjson/profiler/profiler.hpp"
 
+#include <thrust/execution_policy.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/scan.h>
+#include <thrust/transform.h>
+
 namespace gpjson::index {
 namespace {
 
@@ -124,9 +130,9 @@ inline void run_int_sum_scan(const OrigIndexBuilderContext &ctx,
   profiler.end(int_sum_scan_timer);
 }
 
-inline void run_xor_scan(const OrigIndexBuilderContext &ctx,
-                         cuda::DeviceArray &quote_carry_index_mem,
-                         profiler::Profiler &profiler) {
+inline void run_xor_scan_orig(const OrigIndexBuilderContext &ctx,
+                              cuda::DeviceArray &quote_carry_index_mem,
+                              profiler::Profiler &profiler) {
   const profiler::Profiler::SegmentId xor_scan_timer =
       profiler.begin_nested("xor_scan");
   cuda::DeviceArray xor_base_mem(ctx.reduction_grid_size *
@@ -159,11 +165,31 @@ inline void run_xor_scan(const OrigIndexBuilderContext &ctx,
   profiler.end(xor_scan_timer);
 }
 
+inline void run_xor_scan_thrust(const OrigIndexBuilderContext &ctx,
+                                cuda::DeviceArray &string_carry_index_mem,
+                                profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId xor_scan_timer =
+      profiler.begin("xor_scan");
+  thrust::inclusive_scan(
+      thrust::device, string_carry_index_mem.as<char>(),
+      string_carry_index_mem.as<char>() + ctx.num_cuda_threads(),
+      string_carry_index_mem.as<char>(), thrust::bit_xor<char>());
+  cuda::synchronize_and_check();
+  profiler.end(xor_scan_timer);
+}
+
 inline void create_string_index_from_escape_carry_index(
     const OrigIndexBuilderContext &ctx,
     cuda::DeviceArray &escape_carry_index_mem,
     cuda::DeviceArray &quote_carry_index_mem,
     cuda::DeviceArray &string_index_mem, profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId escape_carry_timer =
+      profiler.begin("escape_carry_index");
+  kernels::fuse::escape_carry_index<<<ctx.grid_size, ctx.block_size>>>(
+      ctx.device_file(), ctx.file_size, escape_carry_index_mem.as<char>());
+  cuda::synchronize_and_check();
+  profiler.end(escape_carry_timer);
+
   const profiler::Profiler::SegmentId quote_carry_timer =
       profiler.begin("quote_carry_index_using_escape_carry_index");
   kernels::fuse::quote_carry_index_using_escape_carry_index<<<ctx.grid_size,
@@ -173,11 +199,41 @@ inline void create_string_index_from_escape_carry_index(
   cuda::synchronize_and_check();
   profiler.end(quote_carry_timer);
 
-  run_xor_scan(ctx, quote_carry_index_mem, profiler);
+  run_xor_scan_orig(ctx, quote_carry_index_mem, profiler);
+  // run_xor_scan_thrust(ctx, quote_carry_index_mem, profiler);
 
   const profiler::Profiler::SegmentId string_index_timer =
       profiler.begin("string_index_using_escape_carry_index_quote_carry_index");
   kernels::fuse::string_index_using_escape_carry_index_quote_carry_index<<<
+      ctx.grid_size, ctx.block_size>>>(
+      ctx.device_file(), ctx.file_size, escape_carry_index_mem.as<char>(),
+      quote_carry_index_mem.as<char>(), string_index_mem.as<long>(),
+      ctx.level_size());
+  cuda::synchronize_and_check();
+  profiler.end(string_index_timer);
+}
+
+inline void
+create_string_index_from_nothing(const OrigIndexBuilderContext &ctx,
+                                 cuda::DeviceArray &escape_carry_index_mem,
+                                 cuda::DeviceArray &quote_carry_index_mem,
+                                 cuda::DeviceArray &string_index_mem,
+                                 profiler::Profiler &profiler) {
+  const profiler::Profiler::SegmentId escape_carry_timer =
+      profiler.begin("escape_carry_quote_carry_index");
+  kernels::fuse::
+      escape_carry_quote_carry_index<<<ctx.grid_size, ctx.block_size>>>(
+          ctx.device_file(), ctx.file_size, escape_carry_index_mem.as<char>(),
+          quote_carry_index_mem.as<char>());
+  cuda::synchronize_and_check();
+  profiler.end(escape_carry_timer);
+
+  // run_xor_scan_orig(ctx, quote_carry_index_mem, profiler);
+  run_xor_scan_thrust(ctx, quote_carry_index_mem, profiler);
+
+  const profiler::Profiler::SegmentId string_index_timer = profiler.begin(
+      "string_index_using_escape_carry_index_quote_carry_index_packed");
+  kernels::fuse::string_index_using_escape_carry_quote_carry_index_packed<<<
       ctx.grid_size, ctx.block_size>>>(
       ctx.device_file(), ctx.file_size, escape_carry_index_mem.as<char>(),
       quote_carry_index_mem.as<char>(), string_index_mem.as<long>(),
@@ -271,16 +327,13 @@ create_newline_and_string_index(const OrigIndexBuilderContext &ctx,
   const profiler::Profiler::SegmentId string_related_timer =
       profiler.begin_nested("string_index related kernels");
 
-  const profiler::Profiler::SegmentId escape_carry_timer =
-      profiler.begin("escape_carry_index");
-  kernels::fuse::escape_carry_index<<<ctx.grid_size, ctx.block_size>>>(
-      ctx.device_file(), ctx.file_size, escape_carry_index_mem.as<char>());
-  cuda::synchronize_and_check();
-  profiler.end(escape_carry_timer);
-
   create_string_index_from_escape_carry_index(ctx, escape_carry_index_mem,
                                               quote_carry_index_mem,
                                               string_index_mem, profiler);
+
+  // create_string_index_from_nothing(ctx, escape_carry_index_mem,
+  //                                  quote_carry_index_mem, string_index_mem,
+  //                                  profiler);
   profiler.end(string_related_timer);
 
   NewlineIndex newline_index(std::move(newline_index_mem), num_lines);
