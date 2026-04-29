@@ -103,25 +103,34 @@ inline void run_int_sum_scan_orig(const SharememIndexBuilderContext &ctx,
                                   profiler::Profiler &profiler) {
   const profiler::Profiler::SegmentId int_sum_scan_timer =
       profiler.begin_nested("int_sum_scan");
+
+  const int num_scan_items = ctx.num_cuda_threads();
+
   cuda::DeviceArray int_sum_base_mem(ctx.reduction_grid_size *
                                      ctx.reduction_block_size * sizeof(int));
-  cuda::DeviceArray newline_index_offset_mem((ctx.grid_size + 1) * sizeof(int));
+
+  // +1 because exclusive scan needs the final slot to contain the total number
+  // of newline characters after scan.
+  cuda::DeviceArray newline_index_offset_mem((num_scan_items + 1) *
+                                             sizeof(int));
+
   copy_scalar_to_device<int>(newline_index_offset_mem, 0, 0);
 
-  const int scan_stride = std::min(ctx.grid_size, ctx.reduction_grid_size *
-                                                      ctx.reduction_block_size);
+  const int scan_stride = std::min(
+      num_scan_items, ctx.reduction_grid_size * ctx.reduction_block_size);
+
   const profiler::Profiler::SegmentId int_sum_pre_scan_timer =
       profiler.begin("int_sum_pre_scan");
   kernels::sharemem::
       int_sum_pre_scan<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
-          newline_count_index_mem.as<int>(), ctx.grid_size);
+          newline_count_index_mem.as<int>(), num_scan_items);
   cuda::synchronize_and_check();
   profiler.end(int_sum_pre_scan_timer);
 
   const profiler::Profiler::SegmentId int_sum_post_scan_timer =
       profiler.begin("int_sum_post_scan");
   kernels::sharemem::int_sum_post_scan<<<1, 1>>>(
-      newline_count_index_mem.as<int>(), ctx.grid_size, scan_stride, 0,
+      newline_count_index_mem.as<int>(), num_scan_items, scan_stride, 0,
       int_sum_base_mem.as<int>());
   cuda::synchronize_and_check();
   profiler.end(int_sum_post_scan_timer);
@@ -130,16 +139,17 @@ inline void run_int_sum_scan_orig(const SharememIndexBuilderContext &ctx,
       profiler.begin("int_sum_rebase");
   kernels::sharemem::
       int_sum_rebase<<<ctx.reduction_grid_size, ctx.reduction_block_size>>>(
-          newline_count_index_mem.as<int>(), ctx.grid_size,
+          newline_count_index_mem.as<int>(), num_scan_items,
           int_sum_base_mem.as<int>(), 1, newline_index_offset_mem.as<int>());
   cuda::synchronize_and_check();
   profiler.end(int_sum_rebase_timer);
 
   cuda::check(cudaMemcpy(newline_count_index_mem.as<int>(),
                          newline_index_offset_mem.as<const int>(),
-                         (ctx.grid_size + 1) * sizeof(int),
+                         (num_scan_items + 1) * sizeof(int),
                          cudaMemcpyDeviceToDevice),
               "cudaMemcpy newline index offsets device to device");
+
   profiler.end(int_sum_scan_timer);
 }
 
@@ -148,9 +158,12 @@ inline void run_int_sum_scan_thrust(const SharememIndexBuilderContext &ctx,
                                     profiler::Profiler &profiler) {
   const profiler::Profiler::SegmentId newline_index_offset_timer =
       profiler.begin("int_sum_scan");
+
   thrust::exclusive_scan(thrust::device, newline_count_index_mem.as<int>(),
-                         newline_count_index_mem.as<int>() + ctx.grid_size + 1,
+                         newline_count_index_mem.as<int>() +
+                             ctx.num_cuda_threads() + 1,
                          newline_count_index_mem.as<int>());
+
   cuda::synchronize_and_check();
   profiler.end(newline_index_offset_timer);
 }
@@ -295,44 +308,51 @@ create_newline_and_string_index(const SharememIndexBuilderContext &ctx,
   cuda::DeviceArray string_index_mem(ctx.level_size() * sizeof(long));
   cuda::DeviceArray string_carry_index_mem(ctx.num_cuda_threads() *
                                            sizeof(char));
-  // 1 extra slot in the end to store number of newlines w/ exclusive scan
-  cuda::DeviceArray per_tile_newline_count_index_mem((ctx.grid_size + 1) *
-                                                     sizeof(int));
-  // int *per_tile_newline_count_index_mem =
-  //     per_tile_newline_offset_index_mem.as<int>() + 1;
+
+  // 1 extra slot in the end to store number of newlines w/ exclusive scan.
+  //
+  // This is now per-thread rather than per-tile:
+  //
+  //   newline_count_index_mem[i]     = number of newlines owned by CUDA thread
+  //   i newline_count_index_mem[i]     = output offset for CUDA thread i after
+  //   scan newline_count_index_mem[N]     = total number of newline characters
+  //
+  // where N = ctx.num_cuda_threads().
+  cuda::DeviceArray newline_count_index_mem((ctx.num_cuda_threads() + 1) *
+                                            sizeof(int));
 
   const profiler::Profiler::SegmentId total_newline_index_timer =
       profiler.begin_nested("newline_index related kernels");
 
-  // NOTE: We compute per-tile newline count instead of per-thread newline count
-  // mainly because this will save us 256x less global write. Per-thread newline
-  // count can be computed on-the-fly.
   const profiler::Profiler::SegmentId newline_count_timer =
       profiler.begin("newline_count_index");
   kernels::sharemem::newline_count_index<<<ctx.grid_size, ctx.block_size>>>(
-      ctx.device_file(), ctx.file_size,
-      per_tile_newline_count_index_mem.as<int>());
+      ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>());
   cuda::synchronize_and_check();
   profiler.end(newline_count_timer);
 
-  // run_int_sum_scan_orig(ctx, per_tile_newline_count_index_mem, profiler);
-  run_int_sum_scan_thrust(ctx, per_tile_newline_count_index_mem, profiler);
+  // The final extra input element must be zero so that after exclusive scan,
+  // newline_count_index_mem[ctx.num_cuda_threads()] stores the total count.
+  copy_scalar_to_device<int>(newline_count_index_mem, ctx.num_cuda_threads(),
+                             0);
+
+  // run_int_sum_scan_orig(ctx, newline_count_index_mem, profiler);
+  run_int_sum_scan_thrust(ctx, newline_count_index_mem, profiler);
 
   // exclusive prefix sum stores the number of physical newline characters.
   const int num_newline_chars = copy_scalar_from_device<int>(
-      per_tile_newline_count_index_mem, ctx.grid_size);
+      newline_count_index_mem, ctx.num_cuda_threads());
   const int num_lines = num_newline_chars + 1;
   LogInfo("num_lines: %d", num_lines);
-  // Assert(num_lines == 310978,
-  //        "Number of newline is incorrect. Expect 310978, got %d", num_lines);
+
   cuda::DeviceArray newline_index_mem(num_lines * sizeof(long));
   copy_scalar_to_device<long>(newline_index_mem, 0, 0L);
 
   const profiler::Profiler::SegmentId newline_index_timer =
       profiler.begin("newline_index");
   kernels::sharemem::newline_index<<<ctx.grid_size, ctx.block_size>>>(
-      ctx.device_file(), ctx.file_size,
-      per_tile_newline_count_index_mem.as<int>(), newline_index_mem.as<long>());
+      ctx.device_file(), ctx.file_size, newline_count_index_mem.as<int>(),
+      newline_index_mem.as<long>());
   cuda::synchronize_and_check();
   profiler.end(newline_index_timer);
   profiler.end(total_newline_index_timer);
