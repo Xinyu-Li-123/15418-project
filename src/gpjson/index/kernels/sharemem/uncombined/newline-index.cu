@@ -22,7 +22,7 @@ __device__ __forceinline__ void emit_newlines_in_uint2(const uint2 packed,
 } // namespace
 
 __device__ void newline_index_per_thread_offset_packed(const char *file,
-                                                       int fileSize,
+                                                       size_t fileSize,
                                                        int *newlineCountIndex,
                                                        long *newlineIndex) {
   // REQUIRES:
@@ -79,7 +79,7 @@ __device__ void newline_index_per_thread_offset_packed(const char *file,
   }
 }
 
-__global__ void newline_index(const char *file, int fileSize,
+__global__ void newline_index(const char *file, size_t fileSize,
                               int *newlineCountIndex, long *newlineIndex) {
   newline_index_per_thread_offset_packed(file, fileSize, newlineCountIndex,
                                          newlineIndex);

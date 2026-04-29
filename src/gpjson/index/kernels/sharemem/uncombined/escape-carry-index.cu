@@ -3,11 +3,13 @@
 #include "gpjson/profiler/profiler.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdio>
 namespace gpjson::index::kernels::sharemem {
 
 __device__ void
-escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
+escape_carry_index_sharemem_packed_forward_read(const char *file,
+                                                size_t fileSize,
                                                 char *escapeCarryIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -15,7 +17,7 @@ escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
   __shared__ alignas(16) char file_chunk[CHUNK_SIZE];
 
   int tid = threadIdx.x;
-  int block_start = blockIdx.x * CHUNK_SIZE;
+  size_t block_start = static_cast<size_t>(blockIdx.x) * CHUNK_SIZE;
 
   // Coalesced global load into shared memory, 16 bytes at a time to make
 
@@ -41,7 +43,8 @@ escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
   constexpr int packed_elems_per_block = CHUNK_SIZE / packed_bytes_gmem;
 
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    int global_byte_idx = block_start + p * packed_bytes_gmem;
+    size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * packed_bytes_gmem;
 
     if (global_byte_idx + packed_bytes_gmem <= fileSize) {
       file_chunk_packed_gmem[p] =
@@ -52,7 +55,7 @@ escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
 
 #pragma unroll
       for (int b = 0; b < packed_bytes_gmem; ++b) {
-        int idx = global_byte_idx + b;
+        size_t idx = global_byte_idx + b;
         dst[b] = (idx < fileSize) ? file[idx] : 0;
       }
     }
@@ -74,12 +77,15 @@ escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
   int word_end = local_end / packed_bytes_smem;
 
   for (int w = word_start;
-       w < word_end && block_start + w * packed_bytes_smem < fileSize; ++w) {
+       w < word_end &&
+       block_start + static_cast<size_t>(w) * packed_bytes_smem < fileSize;
+       ++w) {
     uint64_t word = file_chunk_packed_smem[w];
 
 #pragma unroll
     for (int b = 0; b < packed_bytes_smem; ++b) {
-      int global_idx = block_start + w * packed_bytes_smem + b;
+      size_t global_idx =
+          block_start + static_cast<size_t>(w) * packed_bytes_smem + b;
       if (global_idx >= fileSize) {
         break;
       }
@@ -102,7 +108,8 @@ escape_carry_index_sharemem_packed_forward_read(const char *file, int fileSize,
 }
 
 __device__ void
-escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
+escape_carry_index_sharemem_packed_backward_read(const char *file,
+                                                 size_t fileSize,
                                                  char *escapeCarryIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -110,7 +117,7 @@ escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
   __shared__ alignas(16) char file_chunk[CHUNK_SIZE];
 
   int tid = threadIdx.x;
-  int block_start = blockIdx.x * CHUNK_SIZE;
+  size_t block_start = static_cast<size_t>(blockIdx.x) * CHUNK_SIZE;
 
   // Coalesced global load into shared memory, 16 bytes at a time to make
 
@@ -130,7 +137,8 @@ escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
   constexpr int packed_elems_per_block = CHUNK_SIZE / packed_bytes_gmem;
 
   for (int p = tid; p < packed_elems_per_block; p += blockDim.x) {
-    int global_byte_idx = block_start + p * packed_bytes_gmem;
+    size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * packed_bytes_gmem;
 
     if (global_byte_idx + packed_bytes_gmem <= fileSize) {
       file_chunk_packed_gmem[p] =
@@ -141,7 +149,7 @@ escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
 
 #pragma unroll
       for (int b = 0; b < packed_bytes_gmem; ++b) {
-        int idx = global_byte_idx + b;
+        size_t idx = global_byte_idx + b;
         dst[b] = (idx < fileSize) ? file[idx] : 0;
       }
     }
@@ -176,7 +184,7 @@ escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
 #pragma unroll
     for (int b = packed_bytes_smem - 1; b >= 0; --b) {
       int local_byte = (w - word_start) * packed_bytes_smem + b;
-      int global_idx = block_start + local_start + local_byte;
+      size_t global_idx = block_start + local_start + local_byte;
       if (global_idx >= fileSize) {
         continue;
       }
@@ -200,7 +208,7 @@ escape_carry_index_sharemem_packed_backward_read(const char *file, int fileSize,
 }
 
 __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
-    const char *file, int fileSize, char *escapeCarryIndex) {
+    const char *file, size_t fileSize, char *escapeCarryIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -219,7 +227,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
   static_assert(sizeof(uint2) == PACK_BYTES);
 
   const int tid = threadIdx.x;
-  const int block_start = blockIdx.x * CHUNK_SIZE;
+  const size_t block_start = static_cast<size_t>(blockIdx.x) * CHUNK_SIZE;
 
   // Transposed packed layout:
   //
@@ -251,7 +259,8 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
   //
   //   file_chunk_packed[group][owner_tid]
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
@@ -263,7 +272,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
 
 #pragma unroll
       for (int b = 0; b < PACK_BYTES; ++b) {
-        const int global_idx = global_byte_idx + b;
+        const size_t global_idx = global_byte_idx + b;
         packed_chars[b] = (global_idx < fileSize)
                               ? static_cast<unsigned char>(file[global_idx])
                               : static_cast<unsigned char>(0);
@@ -281,11 +290,13 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
 
   char carry = 0;
 
-  const int thread_global_base = block_start + tid * BYTES_PER_THREAD;
+  const size_t thread_global_base =
+      block_start + static_cast<size_t>(tid) * BYTES_PER_THREAD;
 
 #pragma unroll
   for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
-    const int group_global_base = thread_global_base + group * PACK_BYTES;
+    const size_t group_global_base =
+        thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
 
     if (group_global_base >= fileSize) {
       break;
@@ -300,7 +311,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
 
 #pragma unroll
     for (int b = 0; b < PACK_BYTES; ++b) {
-      const int global_idx = group_global_base + b;
+      const size_t global_idx = group_global_base + b;
 
       if (global_idx >= fileSize) {
         break;
@@ -325,7 +336,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_forward_read(
 }
 
 __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
-    const char *file, int fileSize, char *escapeCarryIndex) {
+    const char *file, size_t fileSize, char *escapeCarryIndex) {
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = 32768; // 512 * 64
@@ -344,7 +355,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
   static_assert(sizeof(uint2) == PACK_BYTES);
 
   const int tid = threadIdx.x;
-  const int block_start = blockIdx.x * CHUNK_SIZE;
+  const size_t block_start = static_cast<size_t>(blockIdx.x) * CHUNK_SIZE;
 
   // Transposed packed layout:
   //
@@ -376,7 +387,8 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
   //
   //   file_chunk_packed[group][owner_tid]
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
@@ -388,7 +400,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
 
 #pragma unroll
       for (int b = 0; b < PACK_BYTES; ++b) {
-        const int global_idx = global_byte_idx + b;
+        const size_t global_idx = global_byte_idx + b;
         packed_chars[b] = (global_idx < fileSize)
                               ? static_cast<unsigned char>(file[global_idx])
                               : static_cast<unsigned char>(0);
@@ -405,7 +417,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
   __syncthreads();
 
   const int local_start = tid * BYTES_PER_THREAD;
-  const int thread_global_base = block_start + local_start;
+  const size_t thread_global_base = block_start + local_start;
 
   char carry = 0;
   bool done = false;
@@ -416,7 +428,8 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
       break;
     }
 
-    const int group_global_base = thread_global_base + group * PACK_BYTES;
+    const size_t group_global_base =
+        thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
 
     // If this whole packed group starts past EOF, skip it. This matters for
     // the last partial tile: the highest groups of some threads may be padding.
@@ -433,7 +446,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
 
 #pragma unroll
     for (int b = PACK_BYTES - 1; b >= 0; --b) {
-      const int global_idx = group_global_base + b;
+      const size_t global_idx = group_global_base + b;
 
       if (global_idx >= fileSize) {
         continue;
@@ -458,7 +471,7 @@ __device__ void escape_carry_index_sharemem_transposed_packed_backward_read(
   }
 }
 
-__global__ void escape_carry_index(const char *file, int fileSize,
+__global__ void escape_carry_index(const char *file, size_t fileSize,
                                    char *escapeCarryIndex) {
   // escape_carry_index_sharemem_packed_forward_read(file, fileSize,
   //                                                 escapeCarryIndex);

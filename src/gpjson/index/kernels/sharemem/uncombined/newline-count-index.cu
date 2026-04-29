@@ -20,7 +20,7 @@ __device__ __forceinline__ int count_newlines_in_uint2(const uint2 packed) {
 } // namespace
 
 __device__ void newline_count_index_per_thread_packed(const char *file,
-                                                      int fileSize,
+                                                      size_t fileSize,
                                                       int *newlineCountIndex) {
   // REQUIRES:
   //   length of newlineCountIndex == gridDim.x * blockDim.x + 1
@@ -103,7 +103,7 @@ __device__ void newline_count_index_per_thread_packed(const char *file,
  *   newlineCountIndex[i]                 = output offset for thread i
  *   newlineCountIndex[num_cuda_threads]  = total number of newline chars
  */
-__global__ void newline_count_index(const char *file, int fileSize,
+__global__ void newline_count_index(const char *file, size_t fileSize,
                                     int *newlineCountIndex) {
   newline_count_index_per_thread_packed(file, fileSize, newlineCountIndex);
 }

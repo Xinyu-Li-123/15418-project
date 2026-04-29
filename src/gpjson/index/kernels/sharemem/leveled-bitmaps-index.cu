@@ -1,6 +1,7 @@
 #include "gpjson/log/log.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 
 namespace gpjson::index::kernels::sharemem {
@@ -8,7 +9,7 @@ namespace {
 constexpr int kMaxNumLevels = 22;
 }
 
-__device__ void leveled_bitmaps_index_orig(const char *file, int fileSize,
+__device__ void leveled_bitmaps_index_orig(const char *file, size_t fileSize,
                                            const long *stringIndex,
                                            char *leveledBitmapsAuxIndex,
                                            long *leveledBitmapsIndex,
@@ -18,16 +19,18 @@ __device__ void leveled_bitmaps_index_orig(const char *file, int fileSize,
   int index = blockIdx.x * blockDim.x + threadIdx.x;
   int stride = blockDim.x * gridDim.x;
 
-  int charsPerThread = (fileSize + stride - 1) / stride;
-  int bitmapAlignedCharsPerThread = ((charsPerThread + 64 - 1) / 64) * 64;
-  int start = index * bitmapAlignedCharsPerThread;
-  int end = start + bitmapAlignedCharsPerThread;
+  size_t charsPerThread =
+      (fileSize + static_cast<size_t>(stride) - 1) / stride;
+  size_t bitmapAlignedCharsPerThread =
+      ((charsPerThread + 64 - 1) / 64) * 64;
+  size_t start = static_cast<size_t>(index) * bitmapAlignedCharsPerThread;
+  size_t end = start + bitmapAlignedCharsPerThread;
 
   signed char level = leveledBitmapsAuxIndex[index];
 
-  for (int blockStart = start; blockStart < end && blockStart < fileSize;
+  for (size_t blockStart = start; blockStart < end && blockStart < fileSize;
        blockStart += 64) {
-    const int wordIndex = blockStart / 64;
+    const size_t wordIndex = blockStart / 64;
     const long string = stringIndex[wordIndex];
     // Accumulate a full 64-bit output word locally, then write each level once.
     long structuralBitmaps[kMaxNumLevels];
@@ -35,12 +38,12 @@ __device__ void leveled_bitmaps_index_orig(const char *file, int fileSize,
       structuralBitmaps[bitmapLevel] = 0;
     }
 
-    const int blockEnd =
+    const size_t blockEnd =
         blockStart + 64 < fileSize ? blockStart + 64 : fileSize;
-    for (int i = blockStart; i < blockEnd; i += 1) {
+    for (size_t i = blockStart; i < blockEnd; i += 1) {
       assert(level >= -1);
 
-      const long offsetInBlock = i % 64;
+      const int offsetInBlock = static_cast<int>(i % 64);
       const long bit = 1L << offsetInBlock;
       if ((string & bit) != 0) {
         continue;
@@ -65,14 +68,15 @@ __device__ void leveled_bitmaps_index_orig(const char *file, int fileSize,
     }
 
     for (int bitmapLevel = 0; bitmapLevel < numLevels; bitmapLevel += 1) {
-      leveledBitmapsIndex[levelSize * bitmapLevel + wordIndex] =
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * bitmapLevel +
+                          wordIndex] =
           structuralBitmaps[bitmapLevel];
     }
   }
 }
 
 __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
-    const char *file, int fileSize, const long *stringIndex,
+    const char *file, size_t fileSize, const long *stringIndex,
     const char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex,
     int levelSize, int numLevels) {
   constexpr int BYTES_PER_THREAD = 64;
@@ -94,10 +98,11 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
-  const int block_start = tile_idx * CHUNK_SIZE;
-  const int global_thread_id = tile_idx * THREADS_PER_BLOCK + tid;
-  const int thread_global_base = global_thread_id * BYTES_PER_THREAD;
-  const int word_idx = thread_global_base / BYTES_PER_THREAD;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+  const size_t global_thread_id =
+      static_cast<size_t>(tile_idx) * THREADS_PER_BLOCK + tid;
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+  const size_t word_idx = thread_global_base / BYTES_PER_THREAD;
 
   __shared__ uint2
       smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
@@ -105,19 +110,20 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
 
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
-    if (global_byte_idx + PACK_BYTES - 1 < fileSize) {
-      const int global_packed_idx = global_byte_idx / PACK_BYTES;
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
       packed_bytes = file_packed_gmem[global_packed_idx];
     } else if (global_byte_idx < fileSize) {
       unsigned char tmp[PACK_BYTES] = {0};
 
       // #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
-        const int global_idx = global_byte_idx + i;
+        const size_t global_idx = global_byte_idx + i;
         if (global_idx < fileSize) {
           tmp[i] = static_cast<unsigned char>(file[global_idx]);
         }
@@ -141,9 +147,10 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
 
   __syncthreads();
 
-  if (word_idx < levelSize) {
+  if (word_idx < static_cast<size_t>(levelSize)) {
     for (int level = 0; level < numLevels; level += 1) {
-      leveledBitmapsIndex[levelSize * level + word_idx] = 0;
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * level + word_idx] =
+          0;
     }
   }
 
@@ -170,7 +177,7 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
     // #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
       const int byte_offset = group * PACK_BYTES + i;
-      const int global_idx = thread_global_base + byte_offset;
+      const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
         break;
@@ -205,15 +212,16 @@ __device__ void leveled_bitmaps_index_sharemem_transposed_packed(
     }
   }
 
-  if (word_idx < levelSize) {
+  if (word_idx < static_cast<size_t>(levelSize)) {
     for (int level = 0; level < numLevels; level += 1) {
-      leveledBitmapsIndex[levelSize * level + word_idx] = bitmap_words[level];
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * level + word_idx] =
+          bitmap_words[level];
     }
   }
 }
 
 __device__ void leveled_bitmaps_index_sharemem_2(
-    const char *file, int fileSize, const long *stringIndex,
+    const char *file, size_t fileSize, const long *stringIndex,
     const char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex,
     int levelSize, int numLevels) {
   constexpr int BYTES_PER_THREAD = 64;
@@ -235,10 +243,11 @@ __device__ void leveled_bitmaps_index_sharemem_2(
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
-  const int block_start = tile_idx * CHUNK_SIZE;
-  const int global_thread_id = tile_idx * THREADS_PER_BLOCK + tid;
-  const int thread_global_base = global_thread_id * BYTES_PER_THREAD;
-  const int word_idx = thread_global_base / BYTES_PER_THREAD;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+  const size_t global_thread_id =
+      static_cast<size_t>(tile_idx) * THREADS_PER_BLOCK + tid;
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+  const size_t word_idx = thread_global_base / BYTES_PER_THREAD;
 
   __shared__ uint2
       smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
@@ -246,19 +255,20 @@ __device__ void leveled_bitmaps_index_sharemem_2(
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
 
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
-    if (global_byte_idx + PACK_BYTES - 1 < fileSize) {
-      const int global_packed_idx = global_byte_idx / PACK_BYTES;
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
       packed_bytes = file_packed_gmem[global_packed_idx];
     } else if (global_byte_idx < fileSize) {
       unsigned char tmp[PACK_BYTES] = {0};
 
 #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
-        const int global_idx = global_byte_idx + i;
+        const size_t global_idx = global_byte_idx + i;
         if (global_idx < fileSize) {
           tmp[i] = static_cast<unsigned char>(file[global_idx]);
         }
@@ -282,12 +292,12 @@ __device__ void leveled_bitmaps_index_sharemem_2(
 
   __syncthreads();
 
-  if (word_idx < levelSize) {
+  if (word_idx < static_cast<size_t>(levelSize)) {
     if (numLevels > 0) {
-      leveledBitmapsIndex[levelSize * 0 + word_idx] = 0;
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * 0 + word_idx] = 0;
     }
     if (numLevels > 1) {
-      leveledBitmapsIndex[levelSize * 1 + word_idx] = 0;
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * 1 + word_idx] = 0;
     }
   }
 
@@ -311,7 +321,7 @@ __device__ void leveled_bitmaps_index_sharemem_2(
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
       const int byte_offset = group * PACK_BYTES + i;
-      const int global_idx = thread_global_base + byte_offset;
+      const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
         break;
@@ -374,18 +384,20 @@ __device__ void leveled_bitmaps_index_sharemem_2(
     }
   }
 
-  if (word_idx < levelSize) {
+  if (word_idx < static_cast<size_t>(levelSize)) {
     if (numLevels > 0) {
-      leveledBitmapsIndex[levelSize * 0 + word_idx] = bitmap0;
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * 0 + word_idx] =
+          bitmap0;
     }
     if (numLevels > 1) {
-      leveledBitmapsIndex[levelSize * 1 + word_idx] = bitmap1;
+      leveledBitmapsIndex[static_cast<size_t>(levelSize) * 1 + word_idx] =
+          bitmap1;
     }
   }
 }
 
 __device__ void leveled_bitmaps_index_sharemem_1(
-    const char *file, int fileSize, const long *stringIndex,
+    const char *file, size_t fileSize, const long *stringIndex,
     const char *leveledBitmapsAuxIndex, long *leveledBitmapsIndex,
     int levelSize, int numLevels) {
   constexpr int BYTES_PER_THREAD = 64;
@@ -407,10 +419,11 @@ __device__ void leveled_bitmaps_index_sharemem_1(
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
-  const int block_start = tile_idx * CHUNK_SIZE;
-  const int global_thread_id = tile_idx * THREADS_PER_BLOCK + tid;
-  const int thread_global_base = global_thread_id * BYTES_PER_THREAD;
-  const int word_idx = thread_global_base / BYTES_PER_THREAD;
+  const size_t block_start = static_cast<size_t>(tile_idx) * CHUNK_SIZE;
+  const size_t global_thread_id =
+      static_cast<size_t>(tile_idx) * THREADS_PER_BLOCK + tid;
+  const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
+  const size_t word_idx = thread_global_base / BYTES_PER_THREAD;
 
   __shared__ uint2
       smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
@@ -418,19 +431,20 @@ __device__ void leveled_bitmaps_index_sharemem_1(
   const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
 
   for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const int global_byte_idx = block_start + p * PACK_BYTES;
+    const size_t global_byte_idx =
+        block_start + static_cast<size_t>(p) * PACK_BYTES;
 
     uint2 packed_bytes = make_uint2(0u, 0u);
 
-    if (global_byte_idx + PACK_BYTES - 1 < fileSize) {
-      const int global_packed_idx = global_byte_idx / PACK_BYTES;
+    if (global_byte_idx + PACK_BYTES <= fileSize) {
+      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
       packed_bytes = file_packed_gmem[global_packed_idx];
     } else if (global_byte_idx < fileSize) {
       unsigned char tmp[PACK_BYTES] = {0};
 
 #pragma unroll
       for (int i = 0; i < PACK_BYTES; ++i) {
-        const int global_idx = global_byte_idx + i;
+        const size_t global_idx = global_byte_idx + i;
         if (global_idx < fileSize) {
           tmp[i] = static_cast<unsigned char>(file[global_idx]);
         }
@@ -454,7 +468,7 @@ __device__ void leveled_bitmaps_index_sharemem_1(
 
   __syncthreads();
 
-  if (word_idx < levelSize && numLevels > 0) {
+  if (word_idx < static_cast<size_t>(levelSize) && numLevels > 0) {
     leveledBitmapsIndex[word_idx] = 0;
   }
 
@@ -477,7 +491,7 @@ __device__ void leveled_bitmaps_index_sharemem_1(
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
       const int byte_offset = group * PACK_BYTES + i;
-      const int global_idx = thread_global_base + byte_offset;
+      const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
         break;
@@ -513,12 +527,12 @@ __device__ void leveled_bitmaps_index_sharemem_1(
     }
   }
 
-  if (word_idx < levelSize && numLevels > 0) {
+  if (word_idx < static_cast<size_t>(levelSize) && numLevels > 0) {
     leveledBitmapsIndex[word_idx] = bitmap0;
   }
 }
 
-__global__ void leveled_bitmaps_index(const char *file, int fileSize,
+__global__ void leveled_bitmaps_index(const char *file, size_t fileSize,
                                       const long *stringIndex,
                                       char *leveledBitmapsAuxIndex,
                                       long *leveledBitmapsIndex, int levelSize,
