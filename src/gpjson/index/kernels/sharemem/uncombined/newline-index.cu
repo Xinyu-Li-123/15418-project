@@ -12,10 +12,9 @@ using NewlinePackT = NEWLINE_PACK_TYPE;
 namespace {
 
 template <typename PackT>
-__device__ __forceinline__ void emit_newlines_in_pack(const PackT packed,
-                                                      const long global_base,
-                                                      int &offset,
-                                                      long *newlineIndex) {
+__device__ __forceinline__ void
+emit_newlines_in_pack(const PackT packed, const long global_base, int &offset,
+                      long *newlineIndex) {
   constexpr int PACK_BYTES = static_cast<int>(sizeof(PackT));
   static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
                     PACK_BYTES == 16,

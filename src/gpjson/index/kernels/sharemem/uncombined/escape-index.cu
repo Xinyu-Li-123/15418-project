@@ -57,11 +57,9 @@ __device__ void escape_index_packed(const char *file, size_t fileSize,
     const size_t global_byte_idx =
         thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
 
-    const PackT packed_bytes_word =
-        packed_bytes::load_gmem_pack_or_tail<PackT>(file, fileSize,
-                                                    global_byte_idx);
-    const unsigned char *packed_bytes =
-        packed_bytes::bytes(packed_bytes_word);
+    const PackT packed_bytes_word = packed_bytes::load_gmem_pack_or_tail<PackT>(
+        file, fileSize, global_byte_idx);
+    const unsigned char *packed_bytes = packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
@@ -142,7 +140,7 @@ __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
   __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
   packed_bytes::stage_file_to_smem</*TRANSPOSED=*/false, GmemPackT, SmemPackT,
-                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+                                   BYTES_PER_THREAD, THREADS_PER_BLOCK>(
       file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
@@ -158,8 +156,7 @@ __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
     const int smem_idx = tid * SMEM_GROUPS_PER_THREAD + group;
     const SmemPackT packed_bytes_word = smem_packed_bytes[smem_idx];
 
-    const unsigned char *packed_bytes =
-        packed_bytes::bytes(packed_bytes_word);
+    const unsigned char *packed_bytes = packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
     for (int i = 0; i < SMEM_PACK_BYTES; ++i) {
@@ -240,7 +237,7 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
   packed_bytes::stage_file_to_smem</*TRANSPOSED=*/true, GmemPackT, SmemPackT,
-                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+                                   BYTES_PER_THREAD, THREADS_PER_BLOCK>(
       file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
@@ -256,8 +253,7 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
     const int smem_idx = group * THREADS_PER_BLOCK + tid;
     const SmemPackT packed_bytes_word = smem_packed_bytes[smem_idx];
 
-    const unsigned char *packed_bytes =
-        packed_bytes::bytes(packed_bytes_word);
+    const unsigned char *packed_bytes = packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
     for (int i = 0; i < SMEM_PACK_BYTES; ++i) {

@@ -304,7 +304,7 @@ leveled_bitmaps_carry_index_sharemem_packed(const char *file, size_t fileSize,
   __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
   packed_bytes::stage_file_to_smem</*TRANSPOSED=*/false, GmemPackT, SmemPackT,
-                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+                                   BYTES_PER_THREAD, THREADS_PER_BLOCK>(
       file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
@@ -349,7 +349,7 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
   __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
   packed_bytes::stage_file_to_smem</*TRANSPOSED=*/true, GmemPackT, SmemPackT,
-                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+                                   BYTES_PER_THREAD, THREADS_PER_BLOCK>(
       file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
