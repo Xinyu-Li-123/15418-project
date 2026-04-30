@@ -1,16 +1,33 @@
+#include "gpjson/index/kernels/sharemem/packed-bytes.cuh"
 #include "gpjson/log/log.hpp"
 
 namespace gpjson::index::kernels::sharemem {
 
+#ifndef NEWLINE_PACK_TYPE
+#define NEWLINE_PACK_TYPE uint4
+#endif
+
+#ifdef FORCED_GMEM_PACK_TYPE
+using NewlinePackT = FORCED_GMEM_PACK_TYPE;
+#else
+using NewlinePackT = NEWLINE_PACK_TYPE;
+#endif
+
 namespace {
 
-__device__ __forceinline__ int count_newlines_in_uint2(const uint2 packed) {
-  const unsigned char *chars = reinterpret_cast<const unsigned char *>(&packed);
+__device__ __forceinline__ int
+count_newlines_in_pack(const NewlinePackT packed) {
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(NewlinePackT));
+  static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
+                    PACK_BYTES == 16,
+                "NEWLINE_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+
+  const unsigned char *chars = packed_bytes::bytes(packed);
 
   int count = 0;
 
 #pragma unroll
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < PACK_BYTES; ++i) {
     count += chars[i] == static_cast<unsigned char>('\n');
   }
 
@@ -28,54 +45,52 @@ __device__ void newline_count_index_per_thread_packed(const char *file,
   // This computes one newline count per CUDA thread. The final +1 slot is
   // initialized by the caller before exclusive scan.
   //
-  // This version preserves the original per-thread contiguous ownership:
+  // This version uses fixed per-thread contiguous ownership:
   //
-  //   thread index owns file[start, end)
+  //   thread index owns file[index * 64, index * 64 + 64)
   //
-  // but uses packed 8-byte global reads where possible.
+  // but uses aligned packed global reads where possible.
+
+  constexpr int BYTES_PER_THREAD = 64;
+  constexpr int THREADS_PER_BLOCK = 512;
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(NewlinePackT));
+  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
+
+  Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
+        THREADS_PER_BLOCK);
+
+  static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
+                    PACK_BYTES == 16,
+                "NEWLINE_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
 
   const int index = blockIdx.x * blockDim.x + threadIdx.x;
-  const int stride = blockDim.x * gridDim.x;
-
-  const long charsPerThread =
-      (static_cast<long>(fileSize) + stride - 1) / stride;
-
-  const long start = static_cast<long>(index) * charsPerThread;
-  const long end = start + charsPerThread;
+  const size_t thread_global_base =
+      static_cast<size_t>(index) * BYTES_PER_THREAD;
 
   int count = 0;
-  long i = start;
 
-  // Scalar peel until the address is 8-byte aligned.
-  //
-  // This keeps reinterpret_cast<const uint2 *>(file) reads aligned by only
-  // reading packed words at global byte indices divisible by 8.
-  for (; i < end && i < fileSize && (i & 7L) != 0; ++i) {
-    if (file[i] == '\n') {
-      count += 1;
+#pragma unroll
+  for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+    const size_t group_global_base =
+        thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
+
+    if (group_global_base >= fileSize) {
+      break;
     }
-  }
 
-  const uint2 *file_packed = reinterpret_cast<const uint2 *>(file);
-
-  // Packed 8-byte loop.
-  for (; i + 7 < end && i + 7 < fileSize; i += 8) {
-    const uint2 packed = file_packed[i >> 3];
-    count += count_newlines_in_uint2(packed);
-  }
-
-  // Scalar tail.
-  for (; i < end && i < fileSize; ++i) {
-    if (file[i] == '\n') {
-      count += 1;
-    }
+    const NewlinePackT packed =
+        packed_bytes::load_gmem_pack_or_tail<NewlinePackT>(file, fileSize,
+                                                           group_global_base);
+    count += count_newlines_in_pack(packed);
   }
 
   newlineCountIndex[index] = count;
 
 #ifdef GPJSON_CPP_DEBUG
   int expected_count = 0;
-  for (long j = start; j < end && j < fileSize; ++j) {
+  for (size_t j = thread_global_base;
+       j < thread_global_base + BYTES_PER_THREAD && j < fileSize; ++j) {
     if (file[j] == '\n') {
       expected_count += 1;
     }
