@@ -9,7 +9,7 @@
 namespace gpjson::index::kernels::sharemem {
 
 #ifndef ESCAPE_CARRY_GMEM_PACK_TYPE
-#define ESCAPE_CARRY_GMEM_PACK_TYPE uint2
+#define ESCAPE_CARRY_GMEM_PACK_TYPE uint4
 #endif
 
 #ifndef ESCAPE_CARRY_SMEM_PACK_TYPE

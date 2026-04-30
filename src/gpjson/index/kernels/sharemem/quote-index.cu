@@ -7,7 +7,7 @@
 namespace gpjson::index::kernels::sharemem {
 
 #ifndef QUOTE_GMEM_PACK_TYPE
-#define QUOTE_GMEM_PACK_TYPE uint2
+#define QUOTE_GMEM_PACK_TYPE uint4
 #endif
 
 #ifndef QUOTE_SMEM_PACK_TYPE

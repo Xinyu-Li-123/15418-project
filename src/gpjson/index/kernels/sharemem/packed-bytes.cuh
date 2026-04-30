@@ -5,7 +5,7 @@
 // #define FORCED_GMEM_PACK_TYPE uint4
 // #define FORCED_GMEM_PACK_TYPE uint2
 // #define FORCED_GMEM_PACK_TYPE uint
-#define FORCED_GMEM_PACK_TYPE unsigned short
+// #define FORCED_GMEM_PACK_TYPE unsigned short
 // #define FORCED_SMEM_PACK_TYPE uint2
 
 namespace gpjson::index::kernels::sharemem::packed_bytes {
