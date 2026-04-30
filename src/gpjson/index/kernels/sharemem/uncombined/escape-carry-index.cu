@@ -16,8 +16,17 @@ namespace gpjson::index::kernels::sharemem {
 #define ESCAPE_CARRY_SMEM_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using EscapeCarryGmemPackT = FORCED_GMEM_PACK_TYPE;
+#else
 using EscapeCarryGmemPackT = ESCAPE_CARRY_GMEM_PACK_TYPE;
+#endif
+
+#ifdef FORCED_SMEM_PACK_TYPE
+using EscapeCarrySmemPackT = FORCED_SMEM_PACK_TYPE;
+#else
 using EscapeCarrySmemPackT = ESCAPE_CARRY_SMEM_PACK_TYPE;
+#endif
 
 __device__ void escape_carry_index_packed_forward_read(const char *file,
                                                        size_t fileSize,

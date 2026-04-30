@@ -14,8 +14,17 @@ namespace gpjson::index::kernels::sharemem {
 #define ESCAPE_SMEM_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using EscapeGmemPackT = FORCED_GMEM_PACK_TYPE;
+#else
 using EscapeGmemPackT = ESCAPE_GMEM_PACK_TYPE;
+#endif
+
+#ifdef FORCED_SMEM_PACK_TYPE
+using EscapeSmemPackT = FORCED_SMEM_PACK_TYPE;
+#else
 using EscapeSmemPackT = ESCAPE_SMEM_PACK_TYPE;
+#endif
 
 __device__ void escape_index_packed(const char *file, size_t fileSize,
                                     char *escapeCarryIndex, long *escapeIndex) {

@@ -17,8 +17,17 @@ namespace gpjson::index::kernels::sharemem {
 #define LBM_SMEM_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using LbmGmemPackT = FORCED_GMEM_PACK_TYPE;
+#else
 using LbmGmemPackT = LBM_GMEM_PACK_TYPE;
+#endif
+
+#ifdef FORCED_SMEM_PACK_TYPE
+using LbmSmemPackT = FORCED_SMEM_PACK_TYPE;
+#else
 using LbmSmemPackT = LBM_SMEM_PACK_TYPE;
+#endif
 
 namespace {
 

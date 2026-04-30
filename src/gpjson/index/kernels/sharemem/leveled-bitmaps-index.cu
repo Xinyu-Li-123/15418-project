@@ -18,8 +18,17 @@ constexpr int kMaxNumLevels = 22;
 #define LBM_INDEX_SMEM_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using LbmIndexGmemPackT = FORCED_GMEM_PACK_TYPE;
+#else
 using LbmIndexGmemPackT = LBM_INDEX_GMEM_PACK_TYPE;
+#endif
+
+#ifdef FORCED_SMEM_PACK_TYPE
+using LbmIndexSmemPackT = FORCED_SMEM_PACK_TYPE;
+#else
 using LbmIndexSmemPackT = LBM_INDEX_SMEM_PACK_TYPE;
+#endif
 
 template <bool TRANSPOSED, typename SmemPackT>
 __device__ __forceinline__ void compute_leveled_bitmaps_from_smem(

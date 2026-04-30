@@ -2,6 +2,12 @@
 
 #include <cstddef>
 
+// #define FORCED_GMEM_PACK_TYPE uint4
+// #define FORCED_GMEM_PACK_TYPE uint2
+// #define FORCED_GMEM_PACK_TYPE uint
+#define FORCED_GMEM_PACK_TYPE unsigned short
+// #define FORCED_SMEM_PACK_TYPE uint2
+
 namespace gpjson::index::kernels::sharemem::packed_bytes {
 
 template <int PACK_BYTES> __host__ __device__ constexpr void check_size() {
@@ -10,8 +16,7 @@ template <int PACK_BYTES> __host__ __device__ constexpr void check_size() {
                 "Pack type must be 2, 4, 8, or 16 bytes.");
 }
 
-template <typename PackedT>
-__host__ __device__ constexpr int pack_size() {
+template <typename PackedT> __host__ __device__ constexpr int pack_size() {
   constexpr int PACK_BYTES = static_cast<int>(sizeof(PackedT));
   check_size<PACK_BYTES>();
   return PACK_BYTES;
@@ -171,8 +176,8 @@ stage_file_to_smem(const char *file, size_t fileSize, size_t block_start,
         }
 
         const int smem_idx =
-            smem_index_from_byte_offset<TRANSPOSED, SmemPackT,
-                                        BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+            smem_index_from_byte_offset<TRANSPOSED, SmemPackT, BYTES_PER_THREAD,
+                                        THREADS_PER_BLOCK>(
                 smem_byte_offset_in_block);
         smem_packed_bytes[smem_idx] = smem_packed;
       }
@@ -198,35 +203,6 @@ stage_file_to_smem(const char *file, size_t fileSize, size_t block_start,
               smem_byte_offset_in_block);
       smem_packed_bytes[smem_idx] = smem_packed;
     }
-  }
-}
-
-template <typename PackT, typename ScalarFn, typename PackFn>
-__device__ __forceinline__ void
-for_each_aligned_pack_in_range(const char *file, size_t fileSize, long start,
-                               long end, ScalarFn scalar_fn,
-                               PackFn pack_fn) {
-  constexpr int PACK_BYTES = pack_size<PackT>();
-
-  long i = start;
-
-  for (; i < end && i < static_cast<long>(fileSize) &&
-         (i % PACK_BYTES) != 0;
-       ++i) {
-    scalar_fn(i, static_cast<unsigned char>(file[i]));
-  }
-
-  const PackT *file_packed = reinterpret_cast<const PackT *>(file);
-
-  for (; i + PACK_BYTES <= end &&
-         i + PACK_BYTES <= static_cast<long>(fileSize);
-       i += PACK_BYTES) {
-    const PackT packed = file_packed[i / PACK_BYTES];
-    pack_fn(i, packed);
-  }
-
-  for (; i < end && i < static_cast<long>(fileSize); ++i) {
-    scalar_fn(i, static_cast<unsigned char>(file[i]));
   }
 }
 

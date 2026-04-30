@@ -7,13 +7,17 @@ namespace gpjson::index::kernels::sharemem {
 #define NEWLINE_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using NewlinePackT = FORCED_GMEM_PACK_TYPE;
+#else
 using NewlinePackT = NEWLINE_PACK_TYPE;
+#endif
 
 namespace {
 
-template <typename PackT>
-__device__ __forceinline__ int count_newlines_in_pack(const PackT packed) {
-  constexpr int PACK_BYTES = static_cast<int>(sizeof(PackT));
+__device__ __forceinline__ int
+count_newlines_in_pack(const NewlinePackT packed) {
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(NewlinePackT));
   static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
                     PACK_BYTES == 16,
                 "NEWLINE_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
@@ -30,31 +34,11 @@ __device__ __forceinline__ int count_newlines_in_pack(const PackT packed) {
   return count;
 }
 
-struct CountNewlineScalar {
-  int *count;
-
-  __device__ __forceinline__ void operator()(long, unsigned char value) const {
-    if (value == static_cast<unsigned char>('\n')) {
-      *count += 1;
-    }
-  }
-};
-
-template <typename PackT> struct CountNewlinePack {
-  int *count;
-
-  __device__ __forceinline__ void operator()(long, PackT packed) const {
-    *count += count_newlines_in_pack(packed);
-  }
-};
-
 } // namespace
 
 __device__ void newline_count_index_per_thread_packed(const char *file,
                                                       size_t fileSize,
                                                       int *newlineCountIndex) {
-  using PackT = NewlinePackT;
-
   // REQUIRES:
   //   length of newlineCountIndex == gridDim.x * blockDim.x + 1
   //
@@ -67,6 +51,11 @@ __device__ void newline_count_index_per_thread_packed(const char *file,
   //
   // but uses aligned packed global reads where possible.
 
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(NewlinePackT));
+  static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
+                    PACK_BYTES == 16,
+                "NEWLINE_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+
   const int index = blockIdx.x * blockDim.x + threadIdx.x;
   const int stride = blockDim.x * gridDim.x;
 
@@ -77,9 +66,31 @@ __device__ void newline_count_index_per_thread_packed(const char *file,
   const long end = start + charsPerThread;
 
   int count = 0;
-  packed_bytes::for_each_aligned_pack_in_range<PackT>(
-      file, fileSize, start, end, CountNewlineScalar{&count},
-      CountNewlinePack<PackT>{&count});
+  long i = start;
+
+  for (; i < end && i < static_cast<long>(fileSize) &&
+         (i % PACK_BYTES) != 0;
+       ++i) {
+    if (file[i] == '\n') {
+      count += 1;
+    }
+  }
+
+  const NewlinePackT *file_packed =
+      reinterpret_cast<const NewlinePackT *>(file);
+
+  for (; i + PACK_BYTES <= end &&
+         i + PACK_BYTES <= static_cast<long>(fileSize);
+       i += PACK_BYTES) {
+    const NewlinePackT packed = file_packed[i / PACK_BYTES];
+    count += count_newlines_in_pack(packed);
+  }
+
+  for (; i < end && i < static_cast<long>(fileSize); ++i) {
+    if (file[i] == '\n') {
+      count += 1;
+    }
+  }
 
   newlineCountIndex[index] = count;
 

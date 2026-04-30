@@ -14,8 +14,17 @@ namespace gpjson::index::kernels::sharemem {
 #define QUOTE_SMEM_PACK_TYPE uint2
 #endif
 
+#ifdef FORCED_GMEM_PACK_TYPE
+using QuoteGmemPackT = FORCED_GMEM_PACK_TYPE;
+#else
 using QuoteGmemPackT = QUOTE_GMEM_PACK_TYPE;
+#endif
+
+#ifdef FORCED_SMEM_PACK_TYPE
+using QuoteSmemPackT = FORCED_SMEM_PACK_TYPE;
+#else
 using QuoteSmemPackT = QUOTE_SMEM_PACK_TYPE;
+#endif
 
 __device__ void quote_index_packed(const char *file, size_t fileSize,
                                    long *escapeIndex, long *quoteIndex,
