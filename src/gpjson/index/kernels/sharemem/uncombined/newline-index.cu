@@ -1,17 +1,30 @@
+#include "gpjson/index/kernels/sharemem/packed-bytes.cuh"
 #include "gpjson/log/log.hpp"
 
 namespace gpjson::index::kernels::sharemem {
 
+#ifndef NEWLINE_PACK_TYPE
+#define NEWLINE_PACK_TYPE uint2
+#endif
+
+using NewlinePackT = NEWLINE_PACK_TYPE;
+
 namespace {
 
-__device__ __forceinline__ void emit_newlines_in_uint2(const uint2 packed,
-                                                       const long global_base,
-                                                       int &offset,
-                                                       long *newlineIndex) {
-  const unsigned char *chars = reinterpret_cast<const unsigned char *>(&packed);
+template <typename PackT>
+__device__ __forceinline__ void emit_newlines_in_pack(const PackT packed,
+                                                      const long global_base,
+                                                      int &offset,
+                                                      long *newlineIndex) {
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(PackT));
+  static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
+                    PACK_BYTES == 16,
+                "NEWLINE_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+
+  const unsigned char *chars = packed_bytes::bytes(packed);
 
 #pragma unroll
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < PACK_BYTES; ++i) {
     if (chars[i] == static_cast<unsigned char>('\n')) {
       newlineIndex[offset + 1] = global_base + i;
       offset += 1;
@@ -19,12 +32,36 @@ __device__ __forceinline__ void emit_newlines_in_uint2(const uint2 packed,
   }
 }
 
+struct EmitNewlineScalar {
+  int *offset;
+  long *newlineIndex;
+
+  __device__ __forceinline__ void operator()(long idx,
+                                             unsigned char value) const {
+    if (value == static_cast<unsigned char>('\n')) {
+      newlineIndex[*offset + 1] = idx;
+      *offset += 1;
+    }
+  }
+};
+
+template <typename PackT> struct EmitNewlinePack {
+  int *offset;
+  long *newlineIndex;
+
+  __device__ __forceinline__ void operator()(long idx, PackT packed) const {
+    emit_newlines_in_pack(packed, idx, *offset, newlineIndex);
+  }
+};
+
 } // namespace
 
 __device__ void newline_index_per_thread_offset_packed(const char *file,
                                                        size_t fileSize,
                                                        int *newlineCountIndex,
                                                        long *newlineIndex) {
+  using PackT = NewlinePackT;
+
   // REQUIRES:
   //   newlineCountIndex has already been exclusive-scanned.
   //
@@ -52,31 +89,9 @@ __device__ void newline_index_per_thread_offset_packed(const char *file,
   const long start = static_cast<long>(index) * charsPerThread;
   const long end = start + charsPerThread;
 
-  long i = start;
-
-  // Scalar peel until the address is 8-byte aligned.
-  for (; i < end && i < fileSize && (i & 7L) != 0; ++i) {
-    if (file[i] == '\n') {
-      newlineIndex[offset + 1] = i;
-      offset += 1;
-    }
-  }
-
-  const uint2 *file_packed = reinterpret_cast<const uint2 *>(file);
-
-  // Packed 8-byte loop.
-  for (; i + 7 < end && i + 7 < fileSize; i += 8) {
-    const uint2 packed = file_packed[i >> 3];
-    emit_newlines_in_uint2(packed, i, offset, newlineIndex);
-  }
-
-  // Scalar tail.
-  for (; i < end && i < fileSize; ++i) {
-    if (file[i] == '\n') {
-      newlineIndex[offset + 1] = i;
-      offset += 1;
-    }
-  }
+  packed_bytes::for_each_aligned_pack_in_range<PackT>(
+      file, fileSize, start, end, EmitNewlineScalar{&offset, newlineIndex},
+      EmitNewlinePack<PackT>{&offset, newlineIndex});
 }
 
 __global__ void newline_index(const char *file, size_t fileSize,

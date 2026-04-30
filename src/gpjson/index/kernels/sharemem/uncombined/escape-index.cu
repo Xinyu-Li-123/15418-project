@@ -1,3 +1,4 @@
+#include "gpjson/index/kernels/sharemem/packed-bytes.cuh"
 #include "gpjson/log/log.hpp"
 
 #include <cstddef>
@@ -5,19 +6,34 @@
 
 namespace gpjson::index::kernels::sharemem {
 
+#ifndef ESCAPE_GMEM_PACK_TYPE
+#define ESCAPE_GMEM_PACK_TYPE uint2
+#endif
+
+#ifndef ESCAPE_SMEM_PACK_TYPE
+#define ESCAPE_SMEM_PACK_TYPE uint2
+#endif
+
+using EscapeGmemPackT = ESCAPE_GMEM_PACK_TYPE;
+using EscapeSmemPackT = ESCAPE_SMEM_PACK_TYPE;
+
 __device__ void escape_index_packed(const char *file, size_t fileSize,
                                     char *escapeCarryIndex, long *escapeIndex) {
+  using PackT = EscapeGmemPackT;
+
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
 
   Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
         THREADS_PER_BLOCK);
 
-  constexpr int PACK_BYTES = 8;
+  constexpr int PACK_BYTES = static_cast<int>(sizeof(PackT));
   constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
 
+  static_assert(PACK_BYTES == 2 || PACK_BYTES == 4 || PACK_BYTES == 8 ||
+                    PACK_BYTES == 16,
+                "ESCAPE_GMEM_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
   static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
-  static_assert(sizeof(uint2) == PACK_BYTES);
 
   const int tid = threadIdx.x;
 
@@ -30,8 +46,6 @@ __device__ void escape_index_packed(const char *file, size_t fileSize,
     return;
   }
 
-  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
-
   bool carry = global_thread_id == 0
                    ? false
                    : static_cast<bool>(escapeCarryIndex[global_thread_id - 1]);
@@ -43,26 +57,11 @@ __device__ void escape_index_packed(const char *file, size_t fileSize,
     const size_t global_byte_idx =
         thread_global_base + static_cast<size_t>(group) * PACK_BYTES;
 
-    uint2 packed_bytes_word = make_uint2(0u, 0u);
-
-    if (global_byte_idx + PACK_BYTES <= fileSize) {
-      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
-      packed_bytes_word = file_packed_gmem[global_packed_idx];
-    } else if (global_byte_idx < fileSize) {
-      unsigned char *packed_bytes =
-          reinterpret_cast<unsigned char *>(&packed_bytes_word);
-
-#pragma unroll
-      for (int i = 0; i < PACK_BYTES; ++i) {
-        const size_t global_idx = global_byte_idx + i;
-        packed_bytes[i] = global_idx < fileSize
-                              ? static_cast<unsigned char>(file[global_idx])
-                              : static_cast<unsigned char>(0);
-      }
-    }
-
-    const uint64_t word = (static_cast<uint64_t>(packed_bytes_word.y) << 32) |
-                          static_cast<uint64_t>(packed_bytes_word.x);
+    const PackT packed_bytes_word =
+        packed_bytes::load_gmem_pack_or_tail<PackT>(file, fileSize,
+                                                    global_byte_idx);
+    const unsigned char *packed_bytes =
+        packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
     for (int i = 0; i < PACK_BYTES; ++i) {
@@ -77,10 +76,7 @@ __device__ void escape_index_packed(const char *file, size_t fileSize,
         escape_word |= uint64_t{1} << byte_offset;
       }
 
-      const unsigned char cur_char =
-          static_cast<unsigned char>((word >> (8 * i)) & 0xFFu);
-
-      if (cur_char == static_cast<unsigned char>('\\')) {
+      if (packed_bytes[i] == static_cast<unsigned char>('\\')) {
         carry = !carry;
       } else {
         carry = false;
@@ -95,6 +91,9 @@ __device__ void escape_index_packed(const char *file, size_t fileSize,
 __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
                                              char *escapeCarryIndex,
                                              long *escapeIndex) {
+  using GmemPackT = EscapeGmemPackT;
+  using SmemPackT = EscapeSmemPackT;
+
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
@@ -104,13 +103,21 @@ __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
   Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
         THREADS_PER_BLOCK);
 
-  constexpr int PACK_BYTES = 8;
-  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
-  constexpr int PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / PACK_BYTES;
+  constexpr int GMEM_PACK_BYTES = static_cast<int>(sizeof(GmemPackT));
+  constexpr int SMEM_PACK_BYTES = static_cast<int>(sizeof(SmemPackT));
+  constexpr int SMEM_GROUPS_PER_THREAD = BYTES_PER_THREAD / SMEM_PACK_BYTES;
+  constexpr int SMEM_PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / SMEM_PACK_BYTES;
 
-  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
-  static_assert(CHUNK_SIZE % PACK_BYTES == 0);
-  static_assert(sizeof(uint2) == PACK_BYTES);
+  static_assert(GMEM_PACK_BYTES == 2 || GMEM_PACK_BYTES == 4 ||
+                    GMEM_PACK_BYTES == 8 || GMEM_PACK_BYTES == 16,
+                "ESCAPE_GMEM_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+  static_assert(SMEM_PACK_BYTES == 2 || SMEM_PACK_BYTES == 4 ||
+                    SMEM_PACK_BYTES == 8 || SMEM_PACK_BYTES == 16,
+                "ESCAPE_SMEM_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+  static_assert(BYTES_PER_THREAD % GMEM_PACK_BYTES == 0);
+  static_assert(BYTES_PER_THREAD % SMEM_PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % GMEM_PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % SMEM_PACK_BYTES == 0);
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
@@ -132,43 +139,11 @@ __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
   //
   // This makes the shared-memory write contiguous, but the later per-group
   // warp read is strided by PACKED_GROUPS_PER_THREAD.
-  __shared__ uint2 smem_packed_bytes[PACKED_ELEMS_PER_BLOCK];
+  __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
-  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
-
-  // Coalesced global load, then linear shared-memory write.
-  for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const size_t global_byte_idx =
-        block_start + static_cast<size_t>(p) * PACK_BYTES;
-
-    uint2 packed_bytes = make_uint2(0u, 0u);
-
-    if (global_byte_idx + PACK_BYTES <= fileSize) {
-      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
-      packed_bytes = file_packed_gmem[global_packed_idx];
-    } else if (global_byte_idx < fileSize) {
-      unsigned char tmp[PACK_BYTES] = {0};
-
-#pragma unroll
-      for (int i = 0; i < PACK_BYTES; ++i) {
-        const size_t global_idx = global_byte_idx + i;
-        if (global_idx < fileSize) {
-          tmp[i] = static_cast<unsigned char>(file[global_idx]);
-        }
-      }
-
-      unsigned char *packed_chars =
-          reinterpret_cast<unsigned char *>(&packed_bytes);
-
-#pragma unroll
-      for (int i = 0; i < PACK_BYTES; ++i) {
-        packed_chars[i] = tmp[i];
-      }
-    }
-
-    // Non-transposed: preserve file-order layout in shared memory.
-    smem_packed_bytes[p] = packed_bytes;
-  }
+  packed_bytes::stage_file_to_smem</*TRANSPOSED=*/false, GmemPackT, SmemPackT,
+                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+      file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
 
@@ -179,16 +154,16 @@ __device__ void escape_index_sharemem_packed(const char *file, size_t fileSize,
   uint64_t escape_word = 0;
 
 #pragma unroll
-  for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
-    const int smem_idx = tid * PACKED_GROUPS_PER_THREAD + group;
-    const uint2 packed_bytes_word = smem_packed_bytes[smem_idx];
+  for (int group = 0; group < SMEM_GROUPS_PER_THREAD; ++group) {
+    const int smem_idx = tid * SMEM_GROUPS_PER_THREAD + group;
+    const SmemPackT packed_bytes_word = smem_packed_bytes[smem_idx];
 
     const unsigned char *packed_bytes =
-        reinterpret_cast<const unsigned char *>(&packed_bytes_word);
+        packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
-    for (int i = 0; i < PACK_BYTES; ++i) {
-      const int byte_offset = group * PACK_BYTES + i;
+    for (int i = 0; i < SMEM_PACK_BYTES; ++i) {
+      const int byte_offset = group * SMEM_PACK_BYTES + i;
       const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
@@ -224,6 +199,9 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
                                                         size_t fileSize,
                                                         char *escapeCarryIndex,
                                                         long *escapeIndex) {
+  using GmemPackT = EscapeGmemPackT;
+  using SmemPackT = EscapeSmemPackT;
+
   constexpr int BYTES_PER_THREAD = 64;
   constexpr int THREADS_PER_BLOCK = 512;
   constexpr int CHUNK_SIZE = THREADS_PER_BLOCK * BYTES_PER_THREAD;
@@ -233,13 +211,21 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   Check(blockDim.x == THREADS_PER_BLOCK, "We require %d threads per block.",
         THREADS_PER_BLOCK);
 
-  constexpr int PACK_BYTES = 8;
-  constexpr int PACKED_GROUPS_PER_THREAD = BYTES_PER_THREAD / PACK_BYTES;
-  constexpr int PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / PACK_BYTES;
+  constexpr int GMEM_PACK_BYTES = static_cast<int>(sizeof(GmemPackT));
+  constexpr int SMEM_PACK_BYTES = static_cast<int>(sizeof(SmemPackT));
+  constexpr int SMEM_GROUPS_PER_THREAD = BYTES_PER_THREAD / SMEM_PACK_BYTES;
+  constexpr int SMEM_PACKED_ELEMS_PER_BLOCK = CHUNK_SIZE / SMEM_PACK_BYTES;
 
-  static_assert(BYTES_PER_THREAD % PACK_BYTES == 0);
-  static_assert(CHUNK_SIZE % PACK_BYTES == 0);
-  static_assert(sizeof(uint2) == PACK_BYTES);
+  static_assert(GMEM_PACK_BYTES == 2 || GMEM_PACK_BYTES == 4 ||
+                    GMEM_PACK_BYTES == 8 || GMEM_PACK_BYTES == 16,
+                "ESCAPE_GMEM_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+  static_assert(SMEM_PACK_BYTES == 2 || SMEM_PACK_BYTES == 4 ||
+                    SMEM_PACK_BYTES == 8 || SMEM_PACK_BYTES == 16,
+                "ESCAPE_SMEM_PACK_TYPE must be 2, 4, 8, or 16 bytes.");
+  static_assert(BYTES_PER_THREAD % GMEM_PACK_BYTES == 0);
+  static_assert(BYTES_PER_THREAD % SMEM_PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % GMEM_PACK_BYTES == 0);
+  static_assert(CHUNK_SIZE % SMEM_PACK_BYTES == 0);
 
   const int tid = threadIdx.x;
   const int tile_idx = blockIdx.x;
@@ -251,46 +237,11 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
 
   const size_t thread_global_base = global_thread_id * BYTES_PER_THREAD;
 
-  __shared__ uint2
-      smem_packed_bytes[PACKED_GROUPS_PER_THREAD * THREADS_PER_BLOCK];
+  __shared__ SmemPackT smem_packed_bytes[SMEM_PACKED_ELEMS_PER_BLOCK];
 
-  const uint2 *file_packed_gmem = reinterpret_cast<const uint2 *>(file);
-
-  for (int p = tid; p < PACKED_ELEMS_PER_BLOCK; p += blockDim.x) {
-    const size_t global_byte_idx =
-        block_start + static_cast<size_t>(p) * PACK_BYTES;
-
-    uint2 packed_bytes = make_uint2(0u, 0u);
-
-    if (global_byte_idx + PACK_BYTES <= fileSize) {
-      const size_t global_packed_idx = global_byte_idx / PACK_BYTES;
-      packed_bytes = file_packed_gmem[global_packed_idx];
-    } else if (global_byte_idx < fileSize) {
-      unsigned char tmp[PACK_BYTES] = {0};
-
-#pragma unroll
-      for (int i = 0; i < PACK_BYTES; ++i) {
-        const size_t global_idx = global_byte_idx + i;
-        if (global_idx < fileSize) {
-          tmp[i] = static_cast<unsigned char>(file[global_idx]);
-        }
-      }
-
-      unsigned char *packed_chars =
-          reinterpret_cast<unsigned char *>(&packed_bytes);
-
-#pragma unroll
-      for (int i = 0; i < PACK_BYTES; ++i) {
-        packed_chars[i] = tmp[i];
-      }
-    }
-
-    const int owner_tid = p / PACKED_GROUPS_PER_THREAD;
-    const int packed_group = p % PACKED_GROUPS_PER_THREAD;
-
-    const int smem_idx = packed_group * THREADS_PER_BLOCK + owner_tid;
-    smem_packed_bytes[smem_idx] = packed_bytes;
-  }
+  packed_bytes::stage_file_to_smem</*TRANSPOSED=*/true, GmemPackT, SmemPackT,
+                                    BYTES_PER_THREAD, THREADS_PER_BLOCK>(
+      file, fileSize, block_start, smem_packed_bytes);
 
   __syncthreads();
 
@@ -301,16 +252,16 @@ __device__ void escape_index_sharemem_transposed_packed(const char *file,
   uint64_t escape_word = 0;
 
 #pragma unroll
-  for (int group = 0; group < PACKED_GROUPS_PER_THREAD; ++group) {
+  for (int group = 0; group < SMEM_GROUPS_PER_THREAD; ++group) {
     const int smem_idx = group * THREADS_PER_BLOCK + tid;
-    const uint2 packed_bytes_word = smem_packed_bytes[smem_idx];
+    const SmemPackT packed_bytes_word = smem_packed_bytes[smem_idx];
 
     const unsigned char *packed_bytes =
-        reinterpret_cast<const unsigned char *>(&packed_bytes_word);
+        packed_bytes::bytes(packed_bytes_word);
 
 #pragma unroll
-    for (int i = 0; i < PACK_BYTES; ++i) {
-      const int byte_offset = group * PACK_BYTES + i;
+    for (int i = 0; i < SMEM_PACK_BYTES; ++i) {
+      const int byte_offset = group * SMEM_PACK_BYTES + i;
       const size_t global_idx = thread_global_base + byte_offset;
 
       if (global_idx >= fileSize) {
