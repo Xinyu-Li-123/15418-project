@@ -437,16 +437,24 @@ __device__ void leveled_bitmaps_carry_index_sharemem_transposed_packed(
 __global__ void leveled_bitmaps_carry_index(const char *file, size_t fileSize,
                                             const long *stringIndex,
                                             char *leveledBitmapsAuxIndex) {
+  // 4.25 ms
+  //
   // leveled_bitmaps_carry_index_packed_skip_str(file, fileSize, stringIndex,
   //                                             leveledBitmapsAuxIndex);
 
+  // 3.97 ms
+  //
   // leveled_bitmaps_carry_index_packed(file, fileSize, stringIndex,
   //                                    leveledBitmapsAuxIndex);
 
-  // leveled_bitmaps_carry_index_sharemem_packed(file, fileSize, stringIndex,
-  //                                             leveledBitmapsAuxIndex);
+  // 4.50 ms
+  //
+  leveled_bitmaps_carry_index_sharemem_packed(file, fileSize, stringIndex,
+                                              leveledBitmapsAuxIndex);
 
-  leveled_bitmaps_carry_index_sharemem_transposed_packed(
-      file, fileSize, stringIndex, leveledBitmapsAuxIndex);
+  // 3.87 ms
+  //
+  // leveled_bitmaps_carry_index_sharemem_transposed_packed(
+  //     file, fileSize, stringIndex, leveledBitmapsAuxIndex);
 }
 } // namespace gpjson::index::kernels::sharemem
