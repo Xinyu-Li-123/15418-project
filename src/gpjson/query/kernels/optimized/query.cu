@@ -1,6 +1,21 @@
-#include <assert.h>
+#include "gpjson/query/kernels/optimized.hpp"
 
-namespace gpjson::query::kernels::orig {
+#include "gpjson/cuda/cuda.hpp"
+
+#include <assert.h>
+#include <cstddef>
+#include <cstdint>
+
+namespace gpjson::query::kernels::optimized {
+
+__constant__ unsigned char constant_query_ir[kMaxQueryIrBytes];
+
+void copy_query_ir_to_constant_memory(const void *query_bytes,
+                                      const std::size_t query_size) {
+  cuda::check(cudaMemcpyToSymbol(constant_query_ir, query_bytes, query_size),
+              "copy query IR to constant memory");
+}
+
 namespace {
 
 #define MAX_NUM_LEVELS 16
@@ -16,51 +31,107 @@ namespace {
 #define OPCODE_RESET_POSITION 0x08
 #define OPCODE_EXPRESSION_STRING_EQUALS 0x09
 
-__device__ int find_next_structural_char(const long *ext_index,
-                                         int level_end,
-                                         int line_index,
-                                         int current_level,
-                                         int level_size) {
-  long index = ext_index[level_size * current_level + line_index / 64];
-  while (index == 0 && line_index < level_end) {
-    line_index += 64 - (line_index % 64);
-    index = ext_index[level_size * current_level + line_index / 64];
-  }
-
-  bool is_structural = (index & (1L << (line_index % 64))) != 0;
-  while (!is_structural && line_index < level_end) {
-    ++line_index;
-    index = ext_index[level_size * current_level + line_index / 64];
-    is_structural = (index & (1L << (line_index % 64))) != 0;
-  }
-  return line_index;
+__device__ __forceinline__ uint64_t mask_through_bit(const int bit_offset) {
+  return bit_offset == 63 ? ~uint64_t{0}
+                          : ((uint64_t{1} << (bit_offset + 1)) - 1);
 }
 
-__device__ int find_previous_structural_char(const long *ext_index,
-                                             int level_start,
-                                             int line_index,
-                                             int current_level,
-                                             int level_size) {
-  long index = ext_index[level_size * current_level + line_index / 64];
-  while (index == 0 && line_index > level_start) {
-    line_index -= 64 - (line_index % 64);
-    index = ext_index[level_size * current_level + line_index / 64];
+__device__ __forceinline__ int find_previous_bitmap_bit(const long *bitmap,
+                                                        int min_index,
+                                                        int line_index) {
+  if (line_index < min_index) {
+    return -1;
   }
 
-  bool is_structural = (index & (1L << (line_index % 64))) != 0;
-  while (!is_structural && line_index > level_start) {
-    --line_index;
-    index = ext_index[level_size * current_level + line_index / 64];
-    is_structural = (index & (1L << (line_index % 64))) != 0;
+  int word_index = line_index / 64;
+  int word_base = word_index * 64;
+  uint64_t word = static_cast<uint64_t>(bitmap[word_index]);
+  word &= mask_through_bit(line_index - word_base);
+
+  while (word_base + 63 >= min_index) {
+    uint64_t candidate = word;
+    const int first_bit = min_index - word_base;
+    if (first_bit > 0) {
+      candidate &= ~mask_through_bit(first_bit - 1);
+    }
+
+
+    // __clzll returns the number of zeros before the first set bit, so 63 - __clzll returns the index of the last set bit.
+    if (candidate != 0) {
+      return word_base + 63 -
+             __clzll(static_cast<unsigned long long>(candidate));
+    }
+
+    if (word_index == 0) {
+      break;
+    }
+    --word_index;
+    word_base -= 64;
+    if (word_base + 63 < min_index) {
+      break;
+    }
+    word = static_cast<uint64_t>(bitmap[word_index]);
   }
-  return line_index;
+
+  return -1;
 }
 
-__device__ int read_varint(const unsigned char *query, int *query_pos) {
+__device__ __forceinline__ int
+find_next_structural_char(const long *ext_index, int level_end, int line_index,
+                          int current_level, int level_size) {
+  if (line_index >= level_end) {
+    return level_end;
+  }
+
+  const long *level_index = ext_index + level_size * current_level;
+  int word_index = line_index / 64;
+  int word_base = word_index * 64;
+  uint64_t word = static_cast<uint64_t>(level_index[word_index]);
+  word &= ~uint64_t{0} << (line_index - word_base);
+
+  while (word_base <= level_end) {
+    uint64_t candidate = word;
+    const int last_bit = level_end - word_base;
+    if (last_bit < 63) {
+      //keep only bits through last_bit(this level)
+      candidate &= mask_through_bit(last_bit);
+    }
+
+    // __ffsll returns the index of the first set bit.
+    if (candidate != 0) {
+      return word_base +
+             __ffsll(static_cast<long long>(candidate)) - 1;
+    }
+
+    ++word_index;
+    word_base += 64;
+    if (word_base > level_end) {
+      break;
+    }
+    word = static_cast<uint64_t>(level_index[word_index]);
+  }
+
+  return level_end;
+}
+
+__device__ __forceinline__ int find_previous_structural_char(
+    const long *ext_index, int level_start, int line_index, int current_level,
+    int level_size) {
+  if (line_index <= level_start) {
+    return level_start;
+  }
+
+  const long *level_index = ext_index + level_size * current_level;
+  const int structural_index =
+      find_previous_bitmap_bit(level_index, level_start, line_index);
+  return structural_index == -1 ? level_start : structural_index;
+}
+
+__device__ int read_varint(int *query_pos) {
   int value = 0;
   int shift = 0;
   int byte = 0;
-  while (((byte = query[(*query_pos)++]) & 0x80) != 0) {
+  while (((byte = constant_query_ir[(*query_pos)++]) & 0x80) != 0) {
     value |= (byte & 0x7F) << shift;
     shift += 7;
     assert(shift <= 35);
@@ -70,32 +141,21 @@ __device__ int read_varint(const unsigned char *query, int *query_pos) {
 
 } // namespace
 
-__global__ void execute_query_kernel(const char *file,
-                                     int file_size,
-                                     const long *newline_index,
-                                     int newline_index_size,
-                                     const long *string_index,
-                                     const long *leveled_bitmaps_index,
-                                     int level_size,
-                                     const unsigned char *query,
-                                     int num_results,
-                                     int *result) {
+__global__ void query(const char *file, int file_size,
+                      const long *newline_index, int newline_index_size,
+                      const long *string_index,
+                      const long *leveled_bitmaps_index, int level_size,
+                      int num_results, int *result) {
   const int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
   const int stride = blockDim.x * gridDim.x;
 
-  const int lines_per_thread = (newline_index_size + stride - 1) / stride;
-  const int start = thread_index * lines_per_thread;
-  const int end = start + lines_per_thread;
+  for (int file_index = thread_index; file_index < newline_index_size;
+       file_index += stride) {
+    const int result_base = file_index * 2 * num_results;
+    for (int i = 0; i < 2 * num_results; ++i) {
+      result[result_base + i] = -1;
+    }
 
-  const int init_start = start * 2 * num_results;
-  const int init_end = end * 2 * num_results;
-  for (int i = init_start;
-       i < init_end && i < num_results * 2 * newline_index_size; ++i) {
-    result[i] = -1;
-  }
-
-  for (int file_index = start;
-       file_index < end && file_index < newline_index_size; ++file_index) {
     int line_start = static_cast<int>(newline_index[file_index]);
     int line_end = (file_index + 1 < newline_index_size)
                        ? static_cast<int>(newline_index[file_index + 1])
@@ -137,7 +197,7 @@ __global__ void execute_query_kernel(const char *file,
     int marked_pos_index = -1;
 
     int num_results_index = 0;
-    const unsigned char *key = nullptr;
+    int key_pos = 0;
     int key_len = 0;
     int target_index = 0;
     int curr_index[MAX_NUM_LEVELS];
@@ -146,7 +206,7 @@ __global__ void execute_query_kernel(const char *file,
     }
 
     while (true) {
-      const unsigned char current_opcode = query[query_pos++];
+      const unsigned char current_opcode = constant_query_ir[query_pos++];
       switch (current_opcode) {
       case OPCODE_END:
         goto next_line;
@@ -155,14 +215,16 @@ __global__ void execute_query_kernel(const char *file,
         assert(num_results_index < num_results);
 
         int end_str = level_end[current_level];
-        while (file[line_index] == ' ' && line_index < level_end[current_level]) {
+        while (file[line_index] == ' ' &&
+               line_index < level_end[current_level]) {
           ++line_index;
         }
         while (end_str > line_index && file[end_str - 1] == ' ') {
           --end_str;
         }
 
-        const int result_index = file_index * 2 * num_results + num_results_index * 2;
+        const int result_index =
+            file_index * 2 * num_results + num_results_index * 2;
         result[result_index] = line_index;
         result[result_index + 1] = end_str;
         assert(result[result_index] <= result[result_index + 1]);
@@ -179,22 +241,9 @@ __global__ void execute_query_kernel(const char *file,
       case OPCODE_MOVE_DOWN:
         ++current_level;
         if (level_end[current_level] == -1) {
-          for (int end_candidate = line_index + 1;
-               end_candidate <= level_end[current_level - 1];
-               ++end_candidate) {
-            const long index = leveled_bitmaps_index
-                [level_size * (current_level - 1) + end_candidate / 64];
-            if (index == 0) {
-              end_candidate += 64 - (end_candidate % 64) - 1;
-              continue;
-            }
-            const bool is_structural =
-                (index & (1L << (end_candidate % 64))) != 0;
-            if (is_structural) {
-              level_end[current_level] = end_candidate;
-              break;
-            }
-          }
+          level_end[current_level] = find_next_structural_char(
+              leveled_bitmaps_index, level_end[current_level - 1],
+              line_index + 1, current_level - 1, level_size);
           assert(level_end[current_level] != -1);
           while (file[line_index] == ' ') {
             ++line_index;
@@ -203,8 +252,8 @@ __global__ void execute_query_kernel(const char *file,
         break;
 
       case OPCODE_MOVE_TO_KEY:
-        key_len = read_varint(query, &query_pos);
-        key = query + query_pos;
+        key_len = read_varint(&query_pos);
+        key_pos = query_pos;
         query_pos += key_len;
 
         if (file[line_index] == '{') {
@@ -215,15 +264,8 @@ __global__ void execute_query_kernel(const char *file,
               current_level, level_size);
           assert(file[line_index] == ':' || file[line_index] == '}');
           if (file[line_index] == ':') {
-            int string_end = -1;
-            for (int end_candidate = line_index - 1; end_candidate > line_start;
-                 --end_candidate) {
-              if ((string_index[end_candidate / 64] &
-                   (1L << (end_candidate % 64))) != 0) {
-                string_end = end_candidate;
-                break;
-              }
-            }
+            const int string_end = find_previous_bitmap_bit(
+                string_index, line_start + 1, line_index - 1);
 
             const int string_start = string_end - key_len;
             if (string_start < line_start || file[string_start] != '"') {
@@ -239,7 +281,7 @@ __global__ void execute_query_kernel(const char *file,
             }
 
             for (int i = 0; i < key_len; ++i) {
-              if (key[i] !=
+              if (constant_query_ir[key_pos + i] !=
                   static_cast<unsigned char>(file[string_start + i + 1])) {
                 ++line_index;
                 line_index = find_next_structural_char(
@@ -260,7 +302,7 @@ __global__ void execute_query_kernel(const char *file,
         break;
 
       case OPCODE_MOVE_TO_INDEX:
-        target_index = read_varint(query, &query_pos);
+        target_index = read_varint(&query_pos);
 
         if (file[line_index] == '[' || file[line_index] == ',' ||
             file[line_index] == ']') {
@@ -304,7 +346,7 @@ __global__ void execute_query_kernel(const char *file,
         break;
 
       case OPCODE_MOVE_TO_INDEX_REVERSE:
-        target_index = read_varint(query, &query_pos);
+        target_index = read_varint(&query_pos);
 
         line_index = level_end[current_level] - 1;
         while (file[line_index] == ' ') {
@@ -371,11 +413,12 @@ __global__ void execute_query_kernel(const char *file,
         break;
 
       case OPCODE_EXPRESSION_STRING_EQUALS:
-        key_len = read_varint(query, &query_pos);
-        key = query + query_pos;
+        key_len = read_varint(&query_pos);
+        key_pos = query_pos;
         query_pos += key_len;
 
-        while (file[line_index] == ' ' && line_index < level_end[current_level]) {
+        while (file[line_index] == ' ' &&
+               line_index < level_end[current_level]) {
           ++line_index;
         }
 
@@ -392,7 +435,8 @@ __global__ void execute_query_kernel(const char *file,
           }
 
           for (int i = 0; i < key_len; ++i) {
-            if (key[i] != static_cast<unsigned char>(file[line_index + i])) {
+            if (constant_query_ir[key_pos + i] !=
+                static_cast<unsigned char>(file[line_index + i])) {
               goto next_line;
             }
           }
@@ -409,4 +453,4 @@ __global__ void execute_query_kernel(const char *file,
   }
 }
 
-} // namespace gpjson::query::kernels::orig
+} // namespace gpjson::query::kernels::optimized

@@ -4,6 +4,7 @@
 #include "gpjson/log/log.hpp"
 #include "gpjson/profiler/profiler.hpp"
 #include "gpjson/query/error.hpp"
+#include "gpjson/query/kernels/optimized.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,13 +14,28 @@
 #include <vector>
 
 namespace gpjson::query::kernels::orig {
+__global__ void execute_query_kernel(const char *file, int file_size,
+                                     const long *newline_index,
+                                     int newline_index_size,
+                                     const long *string_index,
+                                     const long *leveled_bitmaps_index,
+                                     int level_size,
+                                     const unsigned char *query,
+                                     int num_results, int *result);
+} // namespace gpjson::query::kernels::orig
+
+namespace gpjson::query::kernels::optimized {
 __global__ void query(const char *file, int file_size,
                       const long *newline_index, int newline_index_size,
                       const long *string_index,
                       const long *leveled_bitmaps_index, int level_size,
                       int num_results, int *result);
+} // namespace gpjson::query::kernels::optimized
 
-namespace {
+namespace gpjson::query::kernels {
+namespace detail {
+
+enum class QueryKernelType { ORIG, OPTIMIZED };
 
 error::query::QueryExecutionError execution_error(const std::string &message) {
   return error::query::QueryExecutionError(message);
@@ -56,7 +72,8 @@ int compute_level_size(size_t partition_size) {
 class QueryExecutionContext {
 public:
   QueryExecutionContext(const file::FilePartition &partition,
-                        const QueryExecutorOptions &options, int num_lines)
+                        const orig::QueryExecutorOptions &options,
+                        int num_lines)
       : block_size(sanitize_block_size(options.block_size)),
         grid_size(compute_grid_size(num_lines, block_size, options.grid_size)),
         file_size(narrow_size_to_int(partition.size_bytes(), "partition size")),
@@ -126,17 +143,67 @@ void validate_query_inputs(const CompiledQuery &compiled_query,
     throw execution_error(
         "Query requires more bitmap levels than the index provides");
   }
-  if (compiled_query.max_depth() >= static_cast<size_t>(kMaxQueryLevels)) {
+  if (compiled_query.max_depth() >= static_cast<size_t>(orig::kMaxQueryLevels)) {
     throw execution_error("Query exceeds the maximum CUDA executor depth");
   }
 }
 
-} // namespace
+void copy_query_ir(const CompiledQuery &compiled_query, QueryKernelType type,
+                   cuda::DeviceArray &device_query) {
+  const size_t query_size = compiled_query.ir_bytes().size();
+  if (query_size > orig::kMaxQueryIrBytes) {
+    throw execution_error("Compiled query IR exceeds constant memory buffer");
+  }
 
-BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
-                               const file::FilePartition &partition,
-                               const index::BuiltIndices &built_indices,
-                               const QueryExecutorOptions &options) {
+  switch (type) {
+  case QueryKernelType::ORIG:
+    device_query = cuda::DeviceArray(query_size);
+    device_query.copy_from_host(compiled_query.ir_bytes().data(), query_size);
+    return;
+
+  case QueryKernelType::OPTIMIZED:
+    optimized::copy_query_ir_to_constant_memory(compiled_query.ir_bytes().data(),
+                                                query_size);
+    return;
+  }
+}
+
+void launch_query_kernel(QueryKernelType type, const QueryExecutionContext &ctx,
+                         const index::BuiltIndices &built_indices,
+                         int num_lines, int level_size, int num_results,
+                         const cuda::DeviceArray &device_query,
+                         cuda::DeviceArray &device_result) {
+  switch (type) {
+  case QueryKernelType::ORIG:
+    orig::execute_query_kernel<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_partition(), ctx.file_size,
+        static_cast<const long *>(built_indices.get_newline_index().data()),
+        num_lines,
+        static_cast<const long *>(built_indices.get_string_index().data()),
+        static_cast<const long *>(
+            built_indices.get_leveled_bitmap_index().data()),
+        level_size, device_query.as<const unsigned char>(), num_results,
+        device_result.as<int>());
+    return;
+
+  case QueryKernelType::OPTIMIZED:
+    optimized::query<<<ctx.grid_size, ctx.block_size>>>(
+        ctx.device_partition(), ctx.file_size,
+        static_cast<const long *>(built_indices.get_newline_index().data()),
+        num_lines,
+        static_cast<const long *>(built_indices.get_string_index().data()),
+        static_cast<const long *>(
+            built_indices.get_leveled_bitmap_index().data()),
+        level_size, num_results, device_result.as<int>());
+    return;
+  }
+}
+
+BatchQueryResult execute_batch_impl(
+    const BatchCompiledQuery &compiled_queries,
+    const file::FilePartition &partition,
+    const index::BuiltIndices &built_indices,
+    const orig::QueryExecutorOptions &options, QueryKernelType kernel_type) {
   BatchQueryResult batch_result(compiled_queries.size());
   for (size_t query_index = 0; query_index < compiled_queries.size();
        ++query_index) {
@@ -186,18 +253,13 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
 
     const int num_results =
         narrow_size_to_int(compiled_query.num_result_slots(), "result slots");
-    const size_t query_size = compiled_query.ir_bytes().size();
-    if (query_size > kMaxQueryIrBytes) {
-      throw execution_error("Compiled query IR exceeds constant memory buffer");
-    }
-
     const size_t host_result_count =
         static_cast<size_t>(num_lines) * static_cast<size_t>(num_results) * 2U;
 
     const profiler::Profiler::SegmentId copy_query_ir_timer =
-        profiler.begin("copy_query_ir_to_constant_memory");
-    copy_query_ir_to_constant_memory(compiled_query.ir_bytes().data(),
-                                     query_size);
+        profiler.begin("copy_query_ir_to_device");
+    cuda::DeviceArray device_query;
+    copy_query_ir(compiled_query, kernel_type, device_query);
     profiler.end(copy_query_ir_timer);
 
     const profiler::Profiler::SegmentId allocate_result_timer =
@@ -206,17 +268,13 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
     profiler.end(allocate_result_timer);
 
     LogInfo(
-        "Launch query kernel: grid=%d block=%d lines=%d results=%d bytes=%d",
+        "Launch query kernel: type=%s grid=%d block=%d lines=%d results=%d "
+        "bytes=%d",
+        kernel_type == QueryKernelType::ORIG ? "ORIG" : "OPTIMIZED",
         ctx.grid_size, ctx.block_size, num_lines, num_results, ctx.file_size);
     const profiler::Profiler::SegmentId query_timer = profiler.begin("query");
-    query<<<ctx.grid_size, ctx.block_size>>>(
-        ctx.device_partition(), ctx.file_size,
-        static_cast<const long *>(built_indices.get_newline_index().data()),
-        num_lines,
-        static_cast<const long *>(built_indices.get_string_index().data()),
-        static_cast<const long *>(
-            built_indices.get_leveled_bitmap_index().data()),
-        level_size, num_results, device_result.as<int>());
+    launch_query_kernel(kernel_type, ctx, built_indices, num_lines, level_size,
+                        num_results, device_query, device_result);
     cuda::check(cudaGetLastError(), "execute_query_kernel launch");
     cuda::synchronize_and_check();
     profiler.end(query_timer);
@@ -240,4 +298,31 @@ BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
   return batch_result;
 }
 
+} // namespace detail
+} // namespace gpjson::query::kernels
+
+namespace gpjson::query::kernels::orig {
+
+BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
+                               const file::FilePartition &partition,
+                               const index::BuiltIndices &built_indices,
+                               const QueryExecutorOptions &options) {
+  return ::gpjson::query::kernels::detail::execute_batch_impl(
+      compiled_queries, partition, built_indices, options,
+      ::gpjson::query::kernels::detail::QueryKernelType::ORIG);
+}
+
 } // namespace gpjson::query::kernels::orig
+
+namespace gpjson::query::kernels::optimized {
+
+BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
+                               const file::FilePartition &partition,
+                               const index::BuiltIndices &built_indices,
+                               const QueryExecutorOptions &options) {
+  return ::gpjson::query::kernels::detail::execute_batch_impl(
+      compiled_queries, partition, built_indices, options,
+      ::gpjson::query::kernels::detail::QueryKernelType::OPTIMIZED);
+}
+
+} // namespace gpjson::query::kernels::optimized

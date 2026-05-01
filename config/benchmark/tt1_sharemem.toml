@@ -1,4 +1,4 @@
-dataset_path = "dataset/twitter_small_records_remove.json"
+dataset_path = "dataset/twitter1600.json"
 queries = ["$.user.lang"]
 
 [file_reader]
@@ -6,7 +6,7 @@ type = "MMAP"
 
 [index_builder]
 type = "COMBINED"
-grid_size = 32768
+grid_size = 65536
 block_size = 512
 reduction_grid_size = 32
 reduction_block_size = 32

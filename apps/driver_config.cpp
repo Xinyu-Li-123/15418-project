@@ -286,6 +286,7 @@ void bind_index_builder_options(Binder &binder,
 template <class Binder>
 void bind_query_executor_options(Binder &binder,
                                  gpjson::query::QueryExecutorOptions &options) {
+  binder.enum_value("query_executor.type", options.query_executor_type);
   binder.value("query_executor.grid_size", options.grid_size);
   binder.value("query_executor.block_size", options.block_size);
 }
@@ -408,7 +409,9 @@ std::string engine_options_to_json(const gpjson::EngineOptions &options) {
   stream << ",\"reduction_block_size\":" << index_builder.reduction_block_size;
   stream << "},";
   stream << "\"query_executor\":{";
-  stream << "\"grid_size\":" << query_executor.grid_size;
+  stream << "\"type\":"
+         << enum_to_json_string(query_executor.query_executor_type);
+  stream << ",\"grid_size\":" << query_executor.grid_size;
   stream << ",\"block_size\":" << query_executor.block_size;
   stream << "}";
   stream << "}";

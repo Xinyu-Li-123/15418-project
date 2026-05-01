@@ -16,9 +16,6 @@ struct QueryExecutorOptions {
   int block_size{1024};
 };
 
-void copy_query_ir_to_constant_memory(const void *query_bytes,
-                                      std::size_t query_size);
-
 BatchQueryResult execute_batch(const BatchCompiledQuery &compiled_queries,
                                const file::FilePartition &partition,
                                const index::BuiltIndices &built_indices,
