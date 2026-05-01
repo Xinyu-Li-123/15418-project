@@ -1,20 +1,9 @@
 #include "gpjson/query/kernels/optimized.hpp"
 
-#include "gpjson/cuda/cuda.hpp"
-
 #include <assert.h>
-#include <cstddef>
 #include <cstdint>
 
 namespace gpjson::query::kernels::optimized {
-
-__constant__ unsigned char constant_query_ir[kMaxQueryIrBytes];
-
-void copy_query_ir_to_constant_memory(const void *query_bytes,
-                                      const std::size_t query_size) {
-  cuda::check(cudaMemcpyToSymbol(constant_query_ir, query_bytes, query_size),
-              "copy query IR to constant memory");
-}
 
 namespace {
 
@@ -127,11 +116,11 @@ __device__ __forceinline__ int find_previous_structural_char(
   return structural_index == -1 ? level_start : structural_index;
 }
 
-__device__ int read_varint(int *query_pos) {
+__device__ int read_varint(const unsigned char *query, int *query_pos) {
   int value = 0;
   int shift = 0;
   int byte = 0;
-  while (((byte = constant_query_ir[(*query_pos)++]) & 0x80) != 0) {
+  while (((byte = query[(*query_pos)++]) & 0x80) != 0) {
     value |= (byte & 0x7F) << shift;
     shift += 7;
     assert(shift <= 35);
@@ -145,7 +134,8 @@ __global__ void query(const char *file, int file_size,
                       const long *newline_index, int newline_index_size,
                       const long *string_index,
                       const long *leveled_bitmaps_index, int level_size,
-                      int num_results, int *result) {
+                      const unsigned char *query, int num_results,
+                      int *result) {
   const int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
   const int stride = blockDim.x * gridDim.x;
 
@@ -206,7 +196,7 @@ __global__ void query(const char *file, int file_size,
     }
 
     while (true) {
-      const unsigned char current_opcode = constant_query_ir[query_pos++];
+      const unsigned char current_opcode = query[query_pos++];
       switch (current_opcode) {
       case OPCODE_END:
         goto next_line;
@@ -252,7 +242,7 @@ __global__ void query(const char *file, int file_size,
         break;
 
       case OPCODE_MOVE_TO_KEY:
-        key_len = read_varint(&query_pos);
+        key_len = read_varint(query, &query_pos);
         key_pos = query_pos;
         query_pos += key_len;
 
@@ -281,7 +271,7 @@ __global__ void query(const char *file, int file_size,
             }
 
             for (int i = 0; i < key_len; ++i) {
-              if (constant_query_ir[key_pos + i] !=
+              if (query[key_pos + i] !=
                   static_cast<unsigned char>(file[string_start + i + 1])) {
                 ++line_index;
                 line_index = find_next_structural_char(
@@ -302,7 +292,7 @@ __global__ void query(const char *file, int file_size,
         break;
 
       case OPCODE_MOVE_TO_INDEX:
-        target_index = read_varint(&query_pos);
+        target_index = read_varint(query, &query_pos);
 
         if (file[line_index] == '[' || file[line_index] == ',' ||
             file[line_index] == ']') {
@@ -346,7 +336,7 @@ __global__ void query(const char *file, int file_size,
         break;
 
       case OPCODE_MOVE_TO_INDEX_REVERSE:
-        target_index = read_varint(&query_pos);
+        target_index = read_varint(query, &query_pos);
 
         line_index = level_end[current_level] - 1;
         while (file[line_index] == ' ') {
@@ -413,7 +403,7 @@ __global__ void query(const char *file, int file_size,
         break;
 
       case OPCODE_EXPRESSION_STRING_EQUALS:
-        key_len = read_varint(&query_pos);
+        key_len = read_varint(query, &query_pos);
         key_pos = query_pos;
         query_pos += key_len;
 
@@ -435,7 +425,7 @@ __global__ void query(const char *file, int file_size,
           }
 
           for (int i = 0; i < key_len; ++i) {
-            if (constant_query_ir[key_pos + i] !=
+            if (query[key_pos + i] !=
                 static_cast<unsigned char>(file[line_index + i])) {
               goto next_line;
             }

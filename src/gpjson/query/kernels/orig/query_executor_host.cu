@@ -29,7 +29,8 @@ __global__ void query(const char *file, int file_size,
                       const long *newline_index, int newline_index_size,
                       const long *string_index,
                       const long *leveled_bitmaps_index, int level_size,
-                      int num_results, int *result);
+                      const unsigned char *query, int num_results,
+                      int *result);
 } // namespace gpjson::query::kernels::optimized
 
 namespace gpjson::query::kernels {
@@ -148,24 +149,15 @@ void validate_query_inputs(const CompiledQuery &compiled_query,
   }
 }
 
-void copy_query_ir(const CompiledQuery &compiled_query, QueryKernelType type,
+void copy_query_ir(const CompiledQuery &compiled_query,
                    cuda::DeviceArray &device_query) {
   const size_t query_size = compiled_query.ir_bytes().size();
   if (query_size > orig::kMaxQueryIrBytes) {
-    throw execution_error("Compiled query IR exceeds constant memory buffer");
+    throw execution_error("Compiled query IR exceeds the query IR buffer limit");
   }
 
-  switch (type) {
-  case QueryKernelType::ORIG:
-    device_query = cuda::DeviceArray(query_size);
-    device_query.copy_from_host(compiled_query.ir_bytes().data(), query_size);
-    return;
-
-  case QueryKernelType::OPTIMIZED:
-    optimized::copy_query_ir_to_constant_memory(compiled_query.ir_bytes().data(),
-                                                query_size);
-    return;
-  }
+  device_query = cuda::DeviceArray(query_size);
+  device_query.copy_from_host(compiled_query.ir_bytes().data(), query_size);
 }
 
 void launch_query_kernel(QueryKernelType type, const QueryExecutionContext &ctx,
@@ -194,7 +186,8 @@ void launch_query_kernel(QueryKernelType type, const QueryExecutionContext &ctx,
         static_cast<const long *>(built_indices.get_string_index().data()),
         static_cast<const long *>(
             built_indices.get_leveled_bitmap_index().data()),
-        level_size, num_results, device_result.as<int>());
+        level_size, device_query.as<const unsigned char>(), num_results,
+        device_result.as<int>());
     return;
   }
 }
@@ -259,7 +252,7 @@ BatchQueryResult execute_batch_impl(
     const profiler::Profiler::SegmentId copy_query_ir_timer =
         profiler.begin("copy_query_ir_to_device");
     cuda::DeviceArray device_query;
-    copy_query_ir(compiled_query, kernel_type, device_query);
+    copy_query_ir(compiled_query, device_query);
     profiler.end(copy_query_ir_timer);
 
     const profiler::Profiler::SegmentId allocate_result_timer =
