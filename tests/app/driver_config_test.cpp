@@ -65,6 +65,8 @@ TEST(DriverConfigTest, DefaultInputsUseOptionStructDefaults) {
   EXPECT_EQ(index_options.block_size, 0);
   EXPECT_EQ(index_options.reduction_grid_size, 0);
   EXPECT_EQ(index_options.reduction_block_size, 0);
+  EXPECT_EQ(query_options.query_executor_type,
+            gpjson::query::QueryExecutorType::ORIG);
   EXPECT_EQ(query_options.grid_size, 512);
   EXPECT_EQ(query_options.block_size, 1024);
 }
@@ -87,6 +89,7 @@ reduction_grid_size = 32
 reduction_block_size = 16
 
 [query_executor]
+type = "OPTIMIZED"
 grid_size = 99
 block_size = 128
 )toml");
@@ -112,6 +115,8 @@ block_size = 128
   EXPECT_EQ(index_options.block_size, 1024);
   EXPECT_EQ(index_options.reduction_grid_size, 32);
   EXPECT_EQ(index_options.reduction_block_size, 16);
+  EXPECT_EQ(query_options.query_executor_type,
+            gpjson::query::QueryExecutorType::OPTIMIZED);
   EXPECT_EQ(query_options.grid_size, 99);
   EXPECT_EQ(query_options.block_size, 128);
 
@@ -155,6 +160,8 @@ block_size = 4
                   "MMAP",
                   "--index-builder.grid-size",
                   "16384",
+                  "--query-executor.type",
+                  "OPTIMIZED",
                   "--query-executor.grid-size",
                   "55",
                   "--query-executor.block-size",
@@ -175,6 +182,8 @@ block_size = 4
             gpjson::index::IndexBuilderType::COMBINED);
   EXPECT_EQ(index_options.grid_size, 16384);
   EXPECT_EQ(index_options.block_size, 2);
+  EXPECT_EQ(query_options.query_executor_type,
+            gpjson::query::QueryExecutorType::OPTIMIZED);
   EXPECT_EQ(query_options.grid_size, 55);
   EXPECT_EQ(query_options.block_size, 64);
 
@@ -204,6 +213,10 @@ TEST(DriverConfigTest, ParsesEnumAliases) {
   EXPECT_EQ(gpjson::driver::parse_enum_value<gpjson::index::IndexBuilderType>(
                 "FUSED"),
             gpjson::index::IndexBuilderType::FUSED);
+  EXPECT_EQ(
+      gpjson::driver::parse_enum_value<gpjson::query::QueryExecutorType>(
+          "OPTIMIZED"),
+      gpjson::query::QueryExecutorType::OPTIMIZED);
 }
 
 TEST(DriverConfigTest, RejectsInvalidEnum) {
@@ -213,5 +226,9 @@ TEST(DriverConfigTest, RejectsInvalidEnum) {
   EXPECT_THROW(
       gpjson::driver::parse_enum_value<gpjson::index::IndexBuilderType>(
           "BAD_BUILDER"),
+      std::runtime_error);
+  EXPECT_THROW(
+      gpjson::driver::parse_enum_value<gpjson::query::QueryExecutorType>(
+          "BAD_QUERY_EXECUTOR"),
       std::runtime_error);
 }

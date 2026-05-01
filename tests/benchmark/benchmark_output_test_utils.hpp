@@ -135,6 +135,7 @@ inline gpjson::EngineOptions benchmark_engine_options() {
           32,
       },
       gpjson::query::QueryExecutorOptions{
+          gpjson::query::QueryExecutorType::ORIG,
           512,
           1024,
       },
